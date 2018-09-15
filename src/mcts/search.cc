@@ -276,6 +276,10 @@ void Search::MaybeTriggerStop() {
   if (responded_bestmove_) return;
   // Don't stop when the root node is not yet expanded.
   if (total_playouts_ == 0) return;
+  int last_seg = last_report_playouts_ / 800;
+  int cur_seg = total_playouts_ / 800;
+  if (cur_seg > last_seg) SendMovesStats();
+  last_report_playouts_ = total_playouts_;
   // If smart pruning tells to stop (best move found), stop.
   if (found_best_move_) {
     FireStopInternal();
@@ -296,7 +300,6 @@ void Search::MaybeTriggerStop() {
   // If we are the first to see that stop is needed.
   if (stop_ && !responded_bestmove_) {
     SendUciInfo();
-    if (kVerboseStats) SendMovesStats();
     best_move_ = GetBestMoveInternal();
     best_move_callback_({best_move_.first, best_move_.second});
     responded_bestmove_ = true;

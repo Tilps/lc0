@@ -75,7 +75,7 @@ void SelfPlayTournament::PopulateOptions(OptionsParser* options) {
   options->Add<ChoiceOption>(kNnBackendStr, backends, "backend") =
       "multiplexing";
   options->Add<StringOption>(kNnBackendOptionsStr, "backend-opts");
-  options->Add<BoolOption>(kVerboseThinkingStr, "verbose-thinking") = false;
+  options->Add<BoolOption>(kVerboseThinkingStr, "verbose-thinking") = true;
   options->Add<FloatOption>(kResignPlaythroughStr, 0.0f, 100.0f,
                             "resign-playthrough") = 0.0f;
 
