@@ -97,8 +97,8 @@ class EngineController {
   RpSharedMutex busy_mutex_;
   using SharedLock = std::shared_lock<RpSharedMutex>;
 
-  std::unique_ptr<Search> search_;
-  std::unique_ptr<NodeTree> tree_;
+  std::unique_ptr<Search<float>> search_;
+  std::unique_ptr<NodeTree<float>> tree_;
   std::unique_ptr<SyzygyTablebase> syzygy_tb_;
   std::unique_ptr<Network> network_;
   NNCache cache_;

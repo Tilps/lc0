@@ -63,7 +63,7 @@ void Benchmark::Run() {
 
     auto network = NetworkFactory::LoadNetwork(option_dict);
 
-    NodeTree tree;
+    NodeTree<float> tree;
     tree.ResetToPosition(option_dict.Get<std::string>(kFenId.GetId()), {});
 
     NNCache cache;
@@ -81,7 +81,7 @@ void Benchmark::Run() {
         limits.visits = visits;
     }
 
-    auto search = std::make_unique<Search>(
+    auto search = std::make_unique<Search<float>>(
         tree, network.get(),
         std::bind(&Benchmark::OnBestMove, this, std::placeholders::_1),
         std::bind(&Benchmark::OnInfo, this, std::placeholders::_1), limits,

@@ -74,6 +74,7 @@ namespace lczero {
 //                                       | sibling_   | -> nullptr
 //                                       +------------+
 
+template<typename Q_Type>
 class Node;
 class Edge {
  public:
@@ -119,14 +120,20 @@ class EdgeList {
   uint16_t size_ = 0;
 };
 
+template<typename Q_Type>
 class EdgeAndNode;
-template <bool is_const>
+template <typename Q_Type>
+class NodeTree;
+template <bool is_const, typename Q_Type>
 class Edge_Iterator;
+template <typename Q_Type>
+class Node_Iterator;
 
+template<typename Q_Type>
 class Node {
  public:
-  using Iterator = Edge_Iterator<false>;
-  using ConstIterator = Edge_Iterator<true>;
+  using Iterator = Edge_Iterator<false, Q_Type>;
+  using ConstIterator = Edge_Iterator<true, Q_Type>;
 
   // Takes pointer to a parent node and own index in a parent.
   Node(Node* parent, uint16_t index) : parent_(parent), index_(index) {}
@@ -153,8 +160,8 @@ class Node {
   int GetNStarted() const { return n_ + n_in_flight_; }
   // Returns node eval, i.e. average subtree V for non-terminal node and -1/0/1
   // for terminal nodes.
-  float GetQ() const { return q_; }
-  float GetD() const { return d_; }
+  Q_Type GetQ() const { return q_; }
+  Q_Type GetD() const { return d_; }
 
   // Returns whether the node is known to be draw/lose/win.
   bool IsTerminal() const { return is_terminal_; }
@@ -177,7 +184,7 @@ class Node {
   // * Q (weighted average of all V in a subtree)
   // * N (+=1)
   // * N-in-flight (-=1)
-  void FinalizeScoreUpdate(float v, float d, int multivisit);
+  void FinalizeScoreUpdate(Q_Type v, Q_Type d, int multivisit);
   // When search decides to treat one visit as several (in case of collisions
   // or visiting terminal nodes several times), it amplifies the visit by
   // incrementing n_in_flight.
@@ -268,10 +275,10 @@ class Node {
   // subtree. For terminal nodes, eval is stored. This is from the perspective
   // of the player who "just" moved to reach this position, rather than from the
   // perspective of the player-to-move for the position.
-  float q_ = 0.0f;
+  Q_Type q_ = 0.0f;
   // Averaged draw probability. Works similarly to Q, except that D is not
   // flipped depending on the side to move.
-  float d_ = 0.0f;
+  Q_Type d_ = 0.0f;
   // Sum of policy priors which have had at least one playout.
   float visited_policy_ = 0.0f;
   // How many completed visits this node had.
@@ -293,10 +300,10 @@ class Node {
   bool is_terminal_ = false;
 
   // TODO(mooskagh) Unfriend NodeTree.
-  friend class NodeTree;
-  friend class Edge_Iterator<true>;
-  friend class Edge_Iterator<false>;
-  friend class Node_Iterator;
+  friend class NodeTree<Q_Type>;
+  friend class Edge_Iterator<true, Q_Type>;
+  friend class Edge_Iterator<false, Q_Type>;
+  friend class Node_Iterator<Q_Type>;
   friend class Edge;
 };
 
@@ -310,17 +317,18 @@ class Node {
 
 // A basic sanity check. This must be adjusted when Node members are adjusted.
 #if defined(__i386__) || (defined(__arm__) && !defined(__aarch64__))
-static_assert(sizeof(Node) == 52, "Unexpected size of Node for 32bit compile");
+static_assert(sizeof(Node<float>) == 52, "Unexpected size of Node for 32bit compile");
 #else
-static_assert(sizeof(Node) == 80, "Unexpected size of Node");
+static_assert(sizeof(Node<float>) == 80, "Unexpected size of Node");
 #endif
 
 // Contains Edge and Node pair and set of proxy functions to simplify access
 // to them.
+template<typename Q_Type>
 class EdgeAndNode {
  public:
   EdgeAndNode() = default;
-  EdgeAndNode(Edge* edge, Node* node) : edge_(edge), node_(node) {}
+  EdgeAndNode(Edge* edge, Node<Q_Type>* node) : edge_(edge), node_(node) {}
   void Reset() { edge_ = nullptr; }
   explicit operator bool() const { return edge_ != nullptr; }
   bool operator==(const EdgeAndNode& other) const {
@@ -333,13 +341,13 @@ class EdgeAndNode {
   bool operator<(const EdgeAndNode& other) const { return edge_ < other.edge_; }
   bool HasNode() const { return node_ != nullptr; }
   Edge* edge() const { return edge_; }
-  Node* node() const { return node_; }
+  Node<Q_Type>* node() const { return node_; }
 
   // Proxy functions for easier access to node/edge.
-  float GetQ(float default_q) const {
+  Q_Type GetQ(float default_q) const {
     return (node_ && node_->GetN() > 0) ? node_->GetQ() : default_q;
   }
-  float GetD() const {
+  Q_Type GetD() const {
     return (node_ && node_->GetN() > 0) ? node_->GetD() : 0.0f;
   }
   // N-related getters, from Node (if exists).
@@ -364,7 +372,7 @@ class EdgeAndNode {
 
   int GetVisitsToReachU(float target_score, float numerator,
                         float default_q) const {
-    const auto q = GetQ(default_q);
+    const float q = GetQ(default_q);
     if (q >= target_score) return std::numeric_limits<int>::max();
     const auto n1 = GetNStarted() + 1;
     return std::max(
@@ -380,7 +388,7 @@ class EdgeAndNode {
   // didn't find anything, or as end iterator signal).
   Edge* edge_ = nullptr;
   // nullptr means that the edge doesn't yet have node extended.
-  Node* node_ = nullptr;
+  Node<Q_Type>* node_ = nullptr;
 };
 
 // TODO(crem) Replace this with less hacky iterator once we support C++17.
@@ -397,11 +405,11 @@ class EdgeAndNode {
 // All functions are not thread safe (must be externally synchronized), but
 // it's fine if Node/Edges state change between calls to functions of the
 // iterator (e.g. advancing the iterator).
-template <bool is_const>
-class Edge_Iterator : public EdgeAndNode {
+template <bool is_const, typename Q_Type>
+class Edge_Iterator : public EdgeAndNode<Q_Type> {
  public:
-  using Ptr = std::conditional_t<is_const, const std::unique_ptr<Node>*,
-                                 std::unique_ptr<Node>*>;
+  using Ptr = std::conditional_t<is_const, const std::unique_ptr<Node<Q_Type>>*,
+                                 std::unique_ptr<Node<Q_Type>>*>;
 
   // Creates "end()" iterator.
   Edge_Iterator() {}
@@ -415,8 +423,8 @@ class Edge_Iterator : public EdgeAndNode {
   }
 
   // Function to support range interface.
-  Edge_Iterator<is_const> begin() { return *this; }
-  Edge_Iterator<is_const> end() { return {}; }
+  Edge_Iterator<is_const, Q_Type> begin() { return *this; }
+  Edge_Iterator<is_const, Q_Type> end() { return {}; }
 
   // Functions to support iterator interface.
   // Equality comparison operators are inherited from EdgeAndNode.
@@ -432,8 +440,8 @@ class Edge_Iterator : public EdgeAndNode {
   Edge_Iterator& operator*() { return *this; }
 
   // If there is node, return it. Otherwise spawn a new one and return it.
-  Node* GetOrSpawnNode(Node* parent,
-                       std::unique_ptr<Node>* node_source = nullptr) {
+  Node<Q_Type>* GetOrSpawnNode(Node<Q_Type>* parent,
+                       std::unique_ptr<Node<Q_Type>>* node_source = nullptr) {
     if (node_) return node_;  // If there is already a node, return it.
     Actualize();              // But maybe other thread already did that.
     if (node_) return node_;  // If it did, return.
@@ -445,7 +453,7 @@ class Edge_Iterator : public EdgeAndNode {
     // 1. Store pointer to a node idx_.7:
     //    node_ptr_ -> &Node(idx_.3).sibling_  ->  nullptr
     //    tmp -> Node(idx_.7)
-    std::unique_ptr<Node> tmp = std::move(*node_ptr_);
+    std::unique_ptr<Node<Q_Type>> tmp = std::move(*node_ptr_);
     // 2. Create fresh Node(idx_.5):
     //    node_ptr_ -> &Node(idx_.3).sibling_  ->  Node(idx_.5)
     //    tmp -> Node(idx_.7)
@@ -453,7 +461,7 @@ class Edge_Iterator : public EdgeAndNode {
       (*node_source)->Reinit(parent, current_idx_);
       *node_ptr_ = std::move(*node_source);
     } else {
-      *node_ptr_ = std::make_unique<Node>(parent, current_idx_);
+      *node_ptr_ = std::make_unique<Node<Q_Type>>(parent, current_idx_);
     }
     // 3. Attach stored pointer back to a list:
     //    node_ptr_ ->
@@ -492,30 +500,33 @@ class Edge_Iterator : public EdgeAndNode {
   uint16_t total_count_ = 0;
 };
 
+template <typename Q_Type>
 class Node_Iterator {
  public:
-  Node_Iterator(Node* node) : node_(node) {}
-  Node* operator*() { return node_; }
-  Node* operator->() { return node_; }
+  Node_Iterator(Node<Q_Type>* node) : node_(node) {}
+  Node<Q_Type>* operator*() { return node_; }
+  Node<Q_Type>* operator->() { return node_; }
   bool operator==(Node_Iterator& other) { return node_ == other.node_; }
   bool operator!=(Node_Iterator& other) { return node_ != other.node_; }
   void operator++() { node_ = node_->sibling_.get(); }
 
  private:
-  Node* node_;
+  Node<Q_Type>* node_;
 };
 
-class Node::NodeRange {
+template <typename Q_Type>
+class Node<Q_Type>::NodeRange {
  public:
-  Node_Iterator begin() { return Node_Iterator(node_); }
-  Node_Iterator end() { return Node_Iterator(nullptr); }
+  Node_Iterator<Q_Type> begin() { return Node_Iterator<Q_Type>(node_); }
+  Node_Iterator<Q_Type> end() { return Node_Iterator<Q_Type>(nullptr); }
 
  private:
-  NodeRange(Node* node) : node_(node) {}
-  Node* node_;
-  friend class Node;
+  NodeRange(Node<Q_Type>* node) : node_(node) {}
+  Node<Q_Type>* node_;
+  friend class Node<Q_Type>;
 };
 
+template <typename Q_Type>
 class NodeTree {
  public:
   ~NodeTree() { DeallocateTree(); }
@@ -535,16 +546,16 @@ class NodeTree {
   const Position& HeadPosition() const { return history_.Last(); }
   int GetPlyCount() const { return HeadPosition().GetGamePly(); }
   bool IsBlackToMove() const { return HeadPosition().IsBlackToMove(); }
-  Node* GetCurrentHead() const { return current_head_; }
-  Node* GetGameBeginNode() const { return gamebegin_node_.get(); }
+  Node<Q_Type>* GetCurrentHead() const { return current_head_; }
+  Node<Q_Type>* GetGameBeginNode() const { return gamebegin_node_.get(); }
   const PositionHistory& GetPositionHistory() const { return history_; }
 
  private:
   void DeallocateTree();
   // A node which to start search from.
-  Node* current_head_ = nullptr;
+  Node<Q_Type>* current_head_ = nullptr;
   // Root node of a game tree.
-  std::unique_ptr<Node> gamebegin_node_;
+  std::unique_ptr<Node<Q_Type>> gamebegin_node_;
   PositionHistory history_;
 };
 

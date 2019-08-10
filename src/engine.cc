@@ -92,7 +92,7 @@ const OptionId kRamLimitMbId{
     "positions have 30 possible moves. When set to 0, no RAM limit is "
     "enforced."};
 
-const size_t kAvgNodeSize = sizeof(Node) + kAvgMovesPerPosition * sizeof(Edge);
+const size_t kAvgNodeSize = sizeof(Node<float>) + kAvgMovesPerPosition * sizeof(Edge);
 const size_t kAvgCacheItemSize =
     NNCache::GetItemStructSize() + sizeof(CachedNNRequest) +
     sizeof(CachedNNRequest::IdxAndProb) * kAvgMovesPerPosition;
@@ -313,7 +313,7 @@ void EngineController::SetupPosition(
 
   UpdateFromUciOptions();
 
-  if (!tree_) tree_ = std::make_unique<NodeTree>();
+  if (!tree_) tree_ = std::make_unique<NodeTree<float>>();
 
   std::vector<Move> moves;
   for (const auto& move : moves_str) moves.emplace_back(move);
@@ -384,7 +384,7 @@ void EngineController::Go(const GoParams& params) {
     };
   }
 
-  search_ = std::make_unique<Search>(*tree_, network_.get(), best_move_callback,
+  search_ = std::make_unique<Search<float>>(*tree_, network_.get(), best_move_callback,
                                      info_callback, limits, options_, &cache_,
                                      syzygy_tb_.get());
 

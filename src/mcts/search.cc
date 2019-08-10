@@ -62,7 +62,8 @@ std::string SearchLimits::DebugString() const {
   return ss.str();
 }
 
-Search::Search(const NodeTree& tree, Network* network,
+template<typename Q_Type>
+Search<Q_Type>::Search(const NodeTree<Q_Type>& tree, Network* network,
                BestMoveInfo::Callback best_move_callback,
                ThinkingInfo::Callback info_callback, const SearchLimits& limits,
                const OptionsDict& options, NNCache* cache,
@@ -81,7 +82,8 @@ Search::Search(const NodeTree& tree, Network* network,
       params_(options) {}
 
 namespace {
-void ApplyDirichletNoise(Node* node, float eps, double alpha) {
+template<typename Q_Type>
+void ApplyDirichletNoise(Node<Q_Type>* node, float eps, double alpha) {
   float total = 0;
   std::vector<float> noise;
 
@@ -101,7 +103,8 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 }
 }  // namespace
 
-void Search::SendUciInfo() REQUIRES(nodes_mutex_) {
+template<typename Q_Type>
+void Search<Q_Type>::SendUciInfo() REQUIRES(nodes_mutex_) {
   auto edges = GetBestChildrenNoTemperature(root_node_, params_.GetMultiPv());
   const auto score_type = params_.GetScoreType();
 
@@ -154,7 +157,8 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) {
 
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
-void Search::MaybeOutputInfo() {
+template <typename Q_Type>
+void Search<Q_Type>::MaybeOutputInfo() {
   SharedMutex::Lock lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   if (!bestmove_is_sent_ && current_best_edge_ &&
@@ -178,13 +182,15 @@ void Search::MaybeOutputInfo() {
   }
 }
 
-int64_t Search::GetTimeSinceStart() const {
+template <typename Q_Type>
+int64_t Search<Q_Type>::GetTimeSinceStart() const {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now() - start_time_)
       .count();
 }
 
-int64_t Search::GetTimeToDeadline() const {
+template <typename Q_Type>
+int64_t Search<Q_Type>::GetTimeToDeadline() const {
   if (!limits_.search_deadline) return 0;
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              *limits_.search_deadline - std::chrono::steady_clock::now())
@@ -192,7 +198,8 @@ int64_t Search::GetTimeToDeadline() const {
 }
 
 namespace {
-inline float GetFpu(const SearchParams& params, Node* node, bool is_root_node) {
+template <typename Q_Type>
+inline float GetFpu(const SearchParams& params, Node<Q_Type>* node, bool is_root_node) {
   const auto value = params.GetFpuValue(is_root_node);
   return params.GetFpuAbsolute(is_root_node)
              ? value
@@ -207,19 +214,20 @@ inline float ComputeCpuct(const SearchParams& params, uint32_t N) {
 }
 }  // namespace
 
-std::vector<std::string> Search::GetVerboseStats(Node* node,
+template <typename Q_Type>
+std::vector<std::string> Search<Q_Type>::GetVerboseStats(Node<Q_Type>* node,
                                                  bool is_black_to_move) const {
   const float fpu = GetFpu(params_, node, node == root_node_);
   const float cpuct = ComputeCpuct(params_, node->GetN());
   const float U_coeff =
       cpuct * std::sqrt(std::max(node->GetChildrenVisits(), 1u));
 
-  std::vector<EdgeAndNode> edges;
+  std::vector<EdgeAndNode<Q_Type>> edges;
   for (const auto& edge : node->Edges()) edges.push_back(edge);
 
   std::sort(
       edges.begin(), edges.end(),
-      [&fpu, &U_coeff](EdgeAndNode a, EdgeAndNode b) {
+      [&fpu, &U_coeff](EdgeAndNode<Q_Type> a, EdgeAndNode<Q_Type> b) {
         return std::forward_as_tuple(a.GetN(), a.GetQ(fpu) + a.GetU(U_coeff)) <
                std::forward_as_tuple(b.GetN(), b.GetQ(fpu) + b.GetU(U_coeff));
       });
@@ -273,7 +281,8 @@ std::vector<std::string> Search::GetVerboseStats(Node* node,
   return infos;
 }
 
-void Search::SendMovesStats() const REQUIRES(counters_mutex_) {
+template <typename Q_Type>
+void Search<Q_Type>::SendMovesStats() const REQUIRES(counters_mutex_) {
   const bool is_black_to_move = played_history_.IsBlackToMove();
   auto move_stats = GetVerboseStats(root_node_, is_black_to_move);
 
@@ -301,7 +310,8 @@ void Search::SendMovesStats() const REQUIRES(counters_mutex_) {
   }
 }
 
-NNCacheLock Search::GetCachedNNEval(Node* node) const {
+template <typename Q_Type>
+NNCacheLock Search<Q_Type>::GetCachedNNEval(Node<Q_Type>* node) const {
   if (!node) return {};
 
   std::vector<Move> moves;
@@ -317,7 +327,8 @@ NNCacheLock Search::GetCachedNNEval(Node* node) const {
   return nneval;
 }
 
-void Search::UpdateKLDGain() {
+template <typename Q_Type>
+void Search<Q_Type>::UpdateKLDGain() {
   if (params_.GetMinimumKLDGainPerNode() <= 0) return;
 
   SharedMutex::Lock nodes_lock(nodes_mutex_);
@@ -352,7 +363,8 @@ void Search::UpdateKLDGain() {
   }
 }
 
-void Search::MaybeTriggerStop() {
+template <typename Q_Type>
+void Search<Q_Type>::MaybeTriggerStop() {
   SharedMutex::Lock nodes_lock(nodes_mutex_);
   Mutex::Lock lock(counters_mutex_);
   // Already responded bestmove, nothing to do here.
@@ -407,11 +419,12 @@ void Search::MaybeTriggerStop() {
         {final_bestmove_.GetMove(played_history_.IsBlackToMove()),
          final_pondermove_.GetMove(!played_history_.IsBlackToMove())});
     bestmove_is_sent_ = true;
-    current_best_edge_ = EdgeAndNode();
+    current_best_edge_ = EdgeAndNode<Q_Type>();
   }
 }
 
-void Search::UpdateRemainingMoves() {
+template <typename Q_Type>
+void Search<Q_Type>::UpdateRemainingMoves() {
   if (params_.GetSmartPruningFactor() <= 0.0f) return;
   SharedMutex::Lock lock(nodes_mutex_);
   remaining_playouts_ = std::numeric_limits<int>::max();
@@ -468,17 +481,19 @@ void Search::UpdateRemainingMoves() {
 // Return the evaluation of the actual best child, regardless of temperature
 // settings. This differs from GetBestMove, which does obey any temperature
 // settings. So, somethimes, they may return results of different moves.
-std::pair<float, float> Search::GetBestEval() const {
+template <typename Q_Type>
+std::pair<float, float> Search<Q_Type>::GetBestEval() const {
   SharedMutex::SharedLock lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   float parent_q = -root_node_->GetQ();
   float parent_d = root_node_->GetD();
   if (!root_node_->HasChildren()) return {parent_q, parent_d};
-  EdgeAndNode best_edge = GetBestChildNoTemperature(root_node_);
+  EdgeAndNode<Q_Type> best_edge = GetBestChildNoTemperature(root_node_);
   return {best_edge.GetQ(parent_q), best_edge.GetD()};
 }
 
-std::pair<Move, Move> Search::GetBestMove() {
+template <typename Q_Type>
+std::pair<Move, Move> Search<Q_Type>::GetBestMove() {
   SharedMutex::Lock lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   EnsureBestMoveKnown();
@@ -486,12 +501,14 @@ std::pair<Move, Move> Search::GetBestMove() {
           final_pondermove_.GetMove(!played_history_.IsBlackToMove())};
 }
 
-std::int64_t Search::GetTotalPlayouts() const {
+template <typename Q_Type>
+std::int64_t Search<Q_Type>::GetTotalPlayouts() const {
   SharedMutex::SharedLock lock(nodes_mutex_);
   return total_playouts_;
 }
 
-bool Search::PopulateRootMoveLimit(MoveList* root_moves) const {
+template <typename Q_Type>
+bool Search<Q_Type>::PopulateRootMoveLimit(MoveList* root_moves) const {
   // Search moves overrides tablebase.
   if (!limits_.searchmoves.empty()) {
     *root_moves = limits_.searchmoves;
@@ -511,7 +528,8 @@ bool Search::PopulateRootMoveLimit(MoveList* root_moves) const {
 }
 
 // Computes the best move, maybe with temperature (according to the settings).
-void Search::EnsureBestMoveKnown() REQUIRES(nodes_mutex_)
+template <typename Q_Type>
+void Search<Q_Type>::EnsureBestMoveKnown() REQUIRES(nodes_mutex_)
     REQUIRES(counters_mutex_) {
   if (bestmove_is_sent_) return;
   if (!root_node_->HasChildren()) return;
@@ -540,7 +558,8 @@ void Search::EnsureBestMoveKnown() REQUIRES(nodes_mutex_)
 }
 
 // Returns @count children with most visits.
-std::vector<EdgeAndNode> Search::GetBestChildrenNoTemperature(Node* parent,
+template <typename Q_Type>
+std::vector<EdgeAndNode<Q_Type>> Search<Q_Type>::GetBestChildrenNoTemperature(Node<Q_Type>* parent,
                                                               int count) const {
   MoveList root_limit;
   if (parent == root_node_) {
@@ -551,7 +570,7 @@ std::vector<EdgeAndNode> Search::GetBestChildrenNoTemperature(Node* parent,
   // * If two nodes have equal number:
   //   * If that number is 0, the one with larger prior wins.
   //   * If that number is larger than 0, the one with larger eval wins.
-  using El = std::tuple<uint64_t, float, float, EdgeAndNode>;
+  using El = std::tuple<uint64_t, float, float, EdgeAndNode<Q_Type>>;
   std::vector<El> edges;
   for (auto edge : parent->Edges()) {
     if (parent == root_node_ && !root_limit.empty() &&
@@ -566,20 +585,22 @@ std::vector<EdgeAndNode> Search::GetBestChildrenNoTemperature(Node* parent,
                           : edges.end();
   std::partial_sort(edges.begin(), middle, edges.end(), std::greater<El>());
 
-  std::vector<EdgeAndNode> res;
+  std::vector<EdgeAndNode<Q_Type>> res;
   std::transform(edges.begin(), middle, std::back_inserter(res),
                  [](const El& x) { return std::get<3>(x); });
   return res;
 }
 
 // Returns a child with most visits.
-EdgeAndNode Search::GetBestChildNoTemperature(Node* parent) const {
+template <typename Q_Type>
+EdgeAndNode<Q_Type> Search<Q_Type>::GetBestChildNoTemperature(Node<Q_Type>* parent) const {
   auto res = GetBestChildrenNoTemperature(parent, 1);
-  return res.empty() ? EdgeAndNode() : res.front();
+  return res.empty() ? EdgeAndNode<Q_Type>() : res.front();
 }
 
 // Returns a child chosen according to weighted-by-temperature visit count.
-EdgeAndNode Search::GetBestChildWithTemperature(Node* parent,
+template <typename Q_Type>
+EdgeAndNode<Q_Type> Search<Q_Type>::GetBestChildWithTemperature(Node<Q_Type>* parent,
                                                 float temperature) const {
   MoveList root_limit;
   if (parent == root_node_) {
@@ -643,7 +664,8 @@ EdgeAndNode Search::GetBestChildWithTemperature(Node* parent,
   return {};
 }
 
-void Search::StartThreads(size_t how_many) {
+template <typename Q_Type>
+void Search<Q_Type>::StartThreads(size_t how_many) {
   Mutex::Lock lock(threads_mutex_);
   // First thread is a watchdog thread.
   if (threads_.size() == 0) {
@@ -652,22 +674,25 @@ void Search::StartThreads(size_t how_many) {
   // Start working threads.
   while (threads_.size() <= how_many) {
     threads_.emplace_back([this]() {
-      SearchWorker worker(this, params_);
+      SearchWorker<Q_Type> worker(this, params_);
       worker.RunBlocking();
     });
   }
 }
 
-void Search::RunBlocking(size_t threads) {
+template <typename Q_Type>
+void Search<Q_Type>::RunBlocking(size_t threads) {
   StartThreads(threads);
   Wait();
 }
 
-bool Search::IsSearchActive() const {
+template <typename Q_Type>
+bool Search<Q_Type>::IsSearchActive() const {
   return !stop_.load(std::memory_order_acquire);
 }
 
-void Search::WatchdogThread() {
+template <typename Q_Type>
+void Search<Q_Type>::WatchdogThread() {
   LOGFILE << "Start a watchdog thread.";
   while (true) {
     MaybeTriggerStop();
@@ -700,19 +725,22 @@ void Search::WatchdogThread() {
   LOGFILE << "End a watchdog thread.";
 }
 
-void Search::FireStopInternal() {
+template <typename Q_Type>
+void Search<Q_Type>::FireStopInternal() {
   stop_.store(true, std::memory_order_release);
   watchdog_cv_.notify_all();
 }
 
-void Search::Stop() {
+template <typename Q_Type>
+void Search<Q_Type>::Stop() {
   Mutex::Lock lock(counters_mutex_);
   ok_to_respond_bestmove_ = true;
   FireStopInternal();
   LOGFILE << "Stopping search due to `stop` uci command.";
 }
 
-void Search::Abort() {
+template <typename Q_Type>
+void Search<Q_Type>::Abort() {
   Mutex::Lock lock(counters_mutex_);
   if (!stop_.load(std::memory_order_acquire) ||
       (!bestmove_is_sent_ && !ok_to_respond_bestmove_)) {
@@ -722,7 +750,8 @@ void Search::Abort() {
   LOGFILE << "Aborting search, if it is still active.";
 }
 
-void Search::Wait() {
+template <typename Q_Type>
+void Search<Q_Type>::Wait() {
   Mutex::Lock lock(threads_mutex_);
   while (!threads_.empty()) {
     threads_.back().join();
@@ -730,7 +759,8 @@ void Search::Wait() {
   }
 }
 
-Search::~Search() {
+template <typename Q_Type>
+Search<Q_Type>::~Search() {
   Abort();
   Wait();
   LOGFILE << "Search destroyed.";
@@ -740,7 +770,8 @@ Search::~Search() {
 // SearchWorker
 //////////////////////////////////////////////////////////////////////////////
 
-void SearchWorker::ExecuteOneIteration() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::ExecuteOneIteration() {
   // 1. Initialize internal structures.
   InitializeIteration(search_->network_->NewComputation());
 
@@ -765,7 +796,8 @@ void SearchWorker::ExecuteOneIteration() {
 
 // 1. Initialize internal structures.
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::InitializeIteration(
+template <typename Q_Type>
+void SearchWorker<Q_Type>::InitializeIteration(
     std::unique_ptr<NetworkComputation> computation) {
   computation_ = std::make_unique<CachingComputation>(std::move(computation),
                                                       search_->cache_);
@@ -781,7 +813,8 @@ void SearchWorker::InitializeIteration(
 
 // 2. Gather minibatch.
 // ~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::GatherMinibatch() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::GatherMinibatch() {
   // Total number of nodes to process.
   int minibatch_size = 0;
   int collision_events_left = params_.GetMaxCollisionEvents();
@@ -851,7 +884,8 @@ void SearchWorker::GatherMinibatch() {
 }
 
 namespace {
-void IncrementNInFlight(Node* node, Node* root, int amount) {
+template <typename Q_Type>
+void IncrementNInFlight(Node<Q_Type>* node, Node<Q_Type>* root, int amount) {
   if (amount == 0) return;
   while (true) {
     node->IncrementNInFlight(amount);
@@ -862,20 +896,21 @@ void IncrementNInFlight(Node* node, Node* root, int amount) {
 }  // namespace
 
 // Returns node and whether there's been a search collision on the node.
-SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend(
+template <typename Q_Type>
+typename SearchWorker<Q_Type>::NodeToProcess SearchWorker<Q_Type>::PickNodeToExtend(
     int collision_limit) {
   // Starting from search_->root_node_, generate a playout, choosing a
   // node at each level according to the MCTS formula. n_in_flight_ is
   // incremented for each node in the playout (via TryStartScoreUpdate()).
 
-  Node* node = search_->root_node_;
-  Node::Iterator best_edge;
-  Node::Iterator second_best_edge;
+  Node<Q_Type>* node = search_->root_node_;
+  Node<Q_Type>::Iterator best_edge;
+  Node<Q_Type>::Iterator second_best_edge;
 
   // Precache a newly constructed node to avoid memory allocations being
   // performed while the mutex is held.
   if (!precached_node_) {
-    precached_node_ = std::make_unique<Node>(nullptr, 0);
+    precached_node_ = std::make_unique<Node<Q_Type>>(nullptr, 0);
   }
 
   SharedMutex::Lock lock(search_->nodes_mutex_);
@@ -914,7 +949,7 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend(
     if (node->IsTerminal() || !node->HasChildren()) {
       return NodeToProcess::Visit(node, depth);
     }
-    Node* possible_shortcut_child = node->GetCachedBestChild();
+    Node<Q_Type>* possible_shortcut_child = node->GetCachedBestChild();
     if (possible_shortcut_child) {
       // Add two here to reverse the conservatism that goes into calculating the
       // remaining cache visits.
@@ -992,16 +1027,17 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend(
   }
 }
 
-void SearchWorker::ExtendNode(Node* node) {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::ExtendNode(Node<Q_Type>* node) {
   // Initialize position sequence with pre-move position.
   history_.Trim(search_->played_history_.GetLength());
   std::vector<Move> to_add;
   // Could instead reserve one more than the difference between history_.size()
   // and history_.capacity().
   to_add.reserve(60);
-  Node* cur = node;
+  Node<Q_Type>* cur = node;
   while (cur != search_->root_node_) {
-    Node* prev = cur->GetParent();
+    Node<Q_Type>* prev = cur->GetParent();
     to_add.push_back(prev->GetEdgeToNode(cur)->GetMove());
     cur = prev;
   }
@@ -1074,7 +1110,8 @@ void SearchWorker::ExtendNode(Node* node) {
 }
 
 // Returns whether node was already in cache.
-bool SearchWorker::AddNodeToComputation(Node* node, bool add_if_cached) {
+template <typename Q_Type>
+bool SearchWorker<Q_Type>::AddNodeToComputation(Node<Q_Type>* node, bool add_if_cached) {
   const auto hash = history_.HashLast(params_.GetCacheHistoryLength() + 1);
   // If already in cache, no need to do anything.
   if (add_if_cached) {
@@ -1109,7 +1146,8 @@ bool SearchWorker::AddNodeToComputation(Node* node, bool add_if_cached) {
 
 // 3. Prefetch into cache.
 // ~~~~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::MaybePrefetchIntoCache() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::MaybePrefetchIntoCache() {
   // TODO(mooskagh) Remove prefetch into cache if node collisions work well.
   // If there are requests to NN, but the batch is not full, try to prefetch
   // nodes which are likely useful in future.
@@ -1125,7 +1163,8 @@ void SearchWorker::MaybePrefetchIntoCache() {
 
 // Prefetches up to @budget nodes into cache. Returns number of nodes
 // prefetched.
-int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
+template <typename Q_Type>
+int SearchWorker<Q_Type>::PrefetchIntoCache(Node<Q_Type>* node, int budget) {
   if (budget <= 0) return 0;
 
   // We are in a leaf, which is not yet being processed.
@@ -1147,7 +1186,7 @@ int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
   if (node->IsTerminal()) return 0;
 
   // Populate all subnodes and their scores.
-  typedef std::pair<float, EdgeAndNode> ScoredEdge;
+  typedef std::pair<float, EdgeAndNode<Q_Type>> ScoredEdge;
   std::vector<ScoredEdge> scores;
   const float cpuct = ComputeCpuct(params_, node->GetN());
   const float puct_mult =
@@ -1207,11 +1246,15 @@ int SearchWorker::PrefetchIntoCache(Node* node, int budget) {
 
 // 4. Run NN computation.
 // ~~~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::RunNNComputation() { computation_->ComputeBlocking(); }
+template <typename Q_Type>
+void SearchWorker<Q_Type>::RunNNComputation() {
+  computation_->ComputeBlocking();
+}
 
 // 5. Retrieve NN computations (and terminal values) into nodes.
 // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::FetchMinibatchResults() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::FetchMinibatchResults() {
   // Populate NN/cached results, or terminal results, into nodes.
   int idx_in_computation = 0;
   for (auto& node_to_process : minibatch_) {
@@ -1220,9 +1263,10 @@ void SearchWorker::FetchMinibatchResults() {
   }
 }
 
-void SearchWorker::FetchSingleNodeResult(NodeToProcess* node_to_process,
+template <typename Q_Type>
+void SearchWorker<Q_Type>::FetchSingleNodeResult(NodeToProcess* node_to_process,
                                          int idx_in_computation) {
-  Node* node = node_to_process->node;
+  Node<Q_Type>* node = node_to_process->node;
   if (!node_to_process->nn_queried) {
     // Terminal nodes don't involve the neural NetworkComputation, nor do
     // they require any further processing after value retrieval.
@@ -1269,7 +1313,8 @@ void SearchWorker::FetchSingleNodeResult(NodeToProcess* node_to_process,
 
 // 6. Propagate the new nodes' information to all their parents in the tree.
 // ~~~~~~~~~~~~~~
-void SearchWorker::DoBackupUpdate() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::DoBackupUpdate() {
   // Nodes mutex for doing node updates.
   SharedMutex::Lock lock(search_->nodes_mutex_);
 
@@ -1278,9 +1323,10 @@ void SearchWorker::DoBackupUpdate() {
   }
 }
 
-void SearchWorker::DoBackupUpdateSingleNode(
+template <typename Q_Type>
+void SearchWorker<Q_Type>::DoBackupUpdateSingleNode(
     const NodeToProcess& node_to_process) REQUIRES(search_->nodes_mutex_) {
-  Node* node = node_to_process.node;
+  Node<Q_Type>* node = node_to_process.node;
   if (node_to_process.IsCollision()) {
     // If it was a collision, just undo counters.
     for (node = node->GetParent(); node != search_->root_node_->GetParent();
@@ -1297,7 +1343,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
   // Backup V value up to a root. After 1 visit, V = Q.
   float v = node_to_process.v;
   float d = node_to_process.d;
-  for (Node *n = node, *p; n != search_->root_node_->GetParent(); n = p) {
+  for (Node<Q_Type>* n = node, *p; n != search_->root_node_->GetParent(); n = p) {
     p = n->GetParent();
 
     // Current node might have become terminal from some other descendant, so
@@ -1347,7 +1393,8 @@ void SearchWorker::DoBackupUpdateSingleNode(
 
 // 7. Update the Search's status and progress information.
 //~~~~~~~~~~~~~~~~~~~~
-void SearchWorker::UpdateCounters() {
+template <typename Q_Type>
+void SearchWorker<Q_Type>::UpdateCounters() {
   search_->UpdateRemainingMoves();  // Updates smart pruning counters.
   search_->UpdateKLDGain();
   search_->MaybeTriggerStop();
@@ -1369,5 +1416,8 @@ void SearchWorker::UpdateCounters() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
+
+template class Search<float>;
+template class Search<double>;
 
 }  // namespace lczero

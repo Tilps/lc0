@@ -50,13 +50,14 @@ namespace {
 const int kGCIntervalMs = 100;
 
 // Every kGCIntervalMs milliseconds release nodes in a separate GC thread.
+template<typename Q_Type>
 class NodeGarbageCollector {
  public:
   NodeGarbageCollector() : gc_thread_([this]() { Worker(); }) {}
 
   // Takes ownership of a subtree, to dispose it in a separate thread when
   // it has time.
-  void AddToGcQueue(std::unique_ptr<Node> node) {
+  void AddToGcQueue(std::unique_ptr<Node<Q_Type>> node) {
     if (!node) return;
     Mutex::Lock lock(gc_mutex_);
     subtrees_to_gc_.emplace_back(std::move(node));
@@ -72,7 +73,7 @@ class NodeGarbageCollector {
   void GarbageCollect() {
     while (!stop_.load()) {
       // Node will be released in destructor when mutex is not locked.
-      std::unique_ptr<Node> node_to_gc;
+      std::unique_ptr<Node<Q_Type>> node_to_gc;
       {
         // Lock the mutex and move last subtree from subtrees_to_gc_ into
         // node_to_gc.
@@ -92,14 +93,17 @@ class NodeGarbageCollector {
   }
 
   mutable Mutex gc_mutex_;
-  std::vector<std::unique_ptr<Node>> subtrees_to_gc_ GUARDED_BY(gc_mutex_);
+  std::vector<std::unique_ptr<Node<Q_Type>>> subtrees_to_gc_ GUARDED_BY(gc_mutex_);
 
   // When true, Worker() should stop and exit.
   std::atomic<bool> stop_{false};
   std::thread gc_thread_;
-};  // namespace
 
-NodeGarbageCollector gNodeGc;
+ public:
+  static NodeGarbageCollector gNodeGc;
+};  // namespace
+template<typename Q_Type>
+typename NodeGarbageCollector<Q_Type> NodeGarbageCollector<Q_Type>::gNodeGc;
 }  // namespace
 
 /////////////////////////////////////////////////////////////////////////
@@ -180,7 +184,8 @@ EdgeList::EdgeList(MoveList moves)
 // Node
 /////////////////////////////////////////////////////////////////////////
 
-Node* Node::CreateSingleChildNode(Move move) {
+template<typename Q_Type>
+Node<Q_Type>* Node<Q_Type>::CreateSingleChildNode(Move move) {
   assert(!edges_);
   assert(!child_);
   edges_ = EdgeList({move});
@@ -188,26 +193,41 @@ Node* Node::CreateSingleChildNode(Move move) {
   return child_.get();
 }
 
-void Node::CreateEdges(const MoveList& moves) {
+template <typename Q_Type>
+void Node<Q_Type>::CreateEdges(const MoveList& moves) {
   assert(!edges_);
   assert(!child_);
   edges_ = EdgeList(moves);
 }
 
-Node::ConstIterator Node::Edges() const { return {edges_, &child_}; }
-Node::Iterator Node::Edges() { return {edges_, &child_}; }
+template <typename Q_Type>
+typename Node<Q_Type>::ConstIterator Node<Q_Type>::Edges() const {
+  return {edges_, &child_};
+}
+template <typename Q_Type>
+typename Node<Q_Type>::Iterator Node<Q_Type>::Edges() {
+  return {edges_, &child_};
+}
 
-float Node::GetVisitedPolicy() const { return visited_policy_; }
+template <typename Q_Type>
+float Node<Q_Type>::GetVisitedPolicy() const {
+  return visited_policy_;
+}
 
-Edge* Node::GetEdgeToNode(const Node* node) const {
+template <typename Q_Type>
+Edge* Node<Q_Type>::GetEdgeToNode(const Node<Q_Type>* node) const {
   assert(node->parent_ == this);
   assert(node->index_ < edges_.size());
   return &edges_[node->index_];
 }
 
-Edge* Node::GetOwnEdge() const { return GetParent()->GetEdgeToNode(this); }
+template <typename Q_Type>
+Edge* Node<Q_Type>::GetOwnEdge() const {
+  return GetParent()->GetEdgeToNode(this);
+}
 
-std::string Node::DebugString() const {
+template <typename Q_Type>
+std::string Node<Q_Type>::DebugString() const {
   std::ostringstream oss;
   oss << " Term:" << is_terminal_ << " This:" << this << " Parent:" << parent_
       << " Index:" << index_ << " Child:" << child_.get()
@@ -216,7 +236,8 @@ std::string Node::DebugString() const {
   return oss.str();
 }
 
-void Node::MakeTerminal(GameResult result) {
+template <typename Q_Type>
+void Node<Q_Type>::MakeTerminal(GameResult result) {
   is_terminal_ = true;
   if (result == GameResult::DRAW) {
     q_ = 0.0f;
@@ -230,7 +251,8 @@ void Node::MakeTerminal(GameResult result) {
   }
 }
 
-void Node::MakeNotTerminal() {
+template <typename Q_Type>
+void Node<Q_Type>::MakeNotTerminal() {
   is_terminal_ = false;
   n_ = 0;
 
@@ -253,18 +275,21 @@ void Node::MakeNotTerminal() {
   }
 }
 
-bool Node::TryStartScoreUpdate() {
+template <typename Q_Type>
+bool Node<Q_Type>::TryStartScoreUpdate() {
   if (n_ == 0 && n_in_flight_ > 0) return false;
   ++n_in_flight_;
   return true;
 }
 
-void Node::CancelScoreUpdate(int multivisit) {
+template <typename Q_Type>
+void Node<Q_Type>::CancelScoreUpdate(int multivisit) {
   n_in_flight_ -= multivisit;
   best_child_cached_ = nullptr;
 }
 
-void Node::FinalizeScoreUpdate(float v, float d, int multivisit) {
+template <typename Q_Type>
+void Node<Q_Type>::FinalizeScoreUpdate(Q_Type v, Q_Type d, int multivisit) {
   // Recompute Q.
   q_ += multivisit * (v - q_) / (n_ + multivisit);
   d_ += multivisit * (d - d_) / (n_ + multivisit);
@@ -281,7 +306,8 @@ void Node::FinalizeScoreUpdate(float v, float d, int multivisit) {
   best_child_cached_ = nullptr;
 }
 
-void Node::UpdateBestChild(const Iterator& best_edge, int visits_allowed) {
+template <typename Q_Type>
+void Node<Q_Type>::UpdateBestChild(const Iterator& best_edge, int visits_allowed) {
   best_child_cached_ = best_edge.node();
   // An edge can point to an unexpanded node with n==0. These nodes don't
   // increment their n_in_flight_ the same way and thus are not safe to cache.
@@ -291,11 +317,18 @@ void Node::UpdateBestChild(const Iterator& best_edge, int visits_allowed) {
   best_child_cache_in_flight_limit_ = visits_allowed + n_in_flight_;
 }
 
-Node::NodeRange Node::ChildNodes() const { return child_.get(); }
+template <typename Q_Type>
+typename Node<Q_Type>::NodeRange Node<Q_Type>::ChildNodes() const {
+  return child_.get();
+}
 
-void Node::ReleaseChildren() { gNodeGc.AddToGcQueue(std::move(child_)); }
+template <typename Q_Type>
+void Node<Q_Type>::ReleaseChildren() {
+  NodeGarbageCollector<Q_Type>::gNodeGc.AddToGcQueue(std::move(child_));
+}
 
-void Node::ReleaseChildrenExceptOne(Node* node_to_save) {
+template <typename Q_Type>
+void Node<Q_Type>::ReleaseChildrenExceptOne(Node* node_to_save) {
   // Stores node which will have to survive (or nullptr if it's not found).
   std::unique_ptr<Node> saved_node;
   // Pointer to unique_ptr, so that we could move from it.
@@ -304,14 +337,14 @@ void Node::ReleaseChildrenExceptOne(Node* node_to_save) {
     // If current node is the one that we have to save.
     if (node->get() == node_to_save) {
       // Kill all remaining siblings.
-      gNodeGc.AddToGcQueue(std::move((*node)->sibling_));
+      NodeGarbageCollector<Q_Type>::gNodeGc.AddToGcQueue(std::move((*node)->sibling_));
       // Save the node, and take the ownership from the unique_ptr.
       saved_node = std::move(*node);
       break;
     }
   }
   // Make saved node the only child. (kills previous siblings).
-  gNodeGc.AddToGcQueue(std::move(child_));
+  NodeGarbageCollector<Q_Type>::gNodeGc.AddToGcQueue(std::move(child_));
   child_ = std::move(saved_node);
 }
 
@@ -325,7 +358,8 @@ uint64_t ReverseBitsInBytes(uint64_t v) {
 }
 }  // namespace
 
-V4TrainingData Node::GetV4TrainingData(GameResult game_result,
+template <typename Q_Type>
+V4TrainingData Node<Q_Type>::GetV4TrainingData(GameResult game_result,
                                        const PositionHistory& history,
                                        FillEmptyHistory fill_empty_history,
                                        float best_q, float best_d) const {
@@ -389,7 +423,8 @@ V4TrainingData Node::GetV4TrainingData(GameResult game_result,
 // EdgeAndNode
 /////////////////////////////////////////////////////////////////////////
 
-std::string EdgeAndNode::DebugString() const {
+template <typename Q_Type>
+std::string EdgeAndNode<Q_Type>::DebugString() const {
   if (!edge_) return "(no edge)";
   return edge_->DebugString() + " " +
          (node_ ? node_->DebugString() : "(no node)");
@@ -399,10 +434,11 @@ std::string EdgeAndNode::DebugString() const {
 // NodeTree
 /////////////////////////////////////////////////////////////////////////
 
-void NodeTree::MakeMove(Move move) {
+template <typename Q_Type>
+void NodeTree<Q_Type>::MakeMove(Move move) {
   if (HeadPosition().IsBlackToMove()) move.Mirror();
 
-  Node* new_head = nullptr;
+  Node<Q_Type>* new_head = nullptr;
   for (auto& n : current_head_->Edges()) {
     if (n.GetMove() == move) {
       new_head = n.GetOrSpawnNode(current_head_);
@@ -418,15 +454,17 @@ void NodeTree::MakeMove(Move move) {
   history_.Append(move);
 }
 
-void NodeTree::TrimTreeAtHead() {
+template <typename Q_Type>
+void NodeTree<Q_Type>::TrimTreeAtHead() {
   auto tmp = std::move(current_head_->sibling_);
   // Send dependent nodes for GC instead of destroying them immediately.
-  gNodeGc.AddToGcQueue(std::move(current_head_->child_));
-  *current_head_ = Node(current_head_->GetParent(), current_head_->index_);
+  NodeGarbageCollector<Q_Type>::gNodeGc.AddToGcQueue(std::move(current_head_->child_));
+  *current_head_ = Node<Q_Type>(current_head_->GetParent(), current_head_->index_);
   current_head_->sibling_ = std::move(tmp);
 }
 
-bool NodeTree::ResetToPosition(const std::string& starting_fen,
+template <typename Q_Type>
+bool NodeTree<Q_Type>::ResetToPosition(const std::string& starting_fen,
                                const std::vector<Move>& moves) {
   ChessBoard starting_board;
   int no_capture_ply;
@@ -438,13 +476,13 @@ bool NodeTree::ResetToPosition(const std::string& starting_fen,
   }
 
   if (!gamebegin_node_) {
-    gamebegin_node_ = std::make_unique<Node>(nullptr, 0);
+    gamebegin_node_ = std::make_unique<Node<Q_Type>>(nullptr, 0);
   }
 
   history_.Reset(starting_board, no_capture_ply,
                  full_moves * 2 - (starting_board.flipped() ? 1 : 2));
 
-  Node* old_head = current_head_;
+  Node<Q_Type>* old_head = current_head_;
   current_head_ = gamebegin_node_.get();
   bool seen_old_head = (gamebegin_node_.get() == old_head);
   for (const auto& move : moves) {
@@ -461,12 +499,17 @@ bool NodeTree::ResetToPosition(const std::string& starting_fen,
   return seen_old_head;
 }
 
-void NodeTree::DeallocateTree() {
+template <typename Q_Type>
+void NodeTree<Q_Type>::DeallocateTree() {
   // Same as gamebegin_node_.reset(), but actual deallocation will happen in
   // GC thread.
-  gNodeGc.AddToGcQueue(std::move(gamebegin_node_));
+  NodeGarbageCollector<Q_Type>::gNodeGc.AddToGcQueue(std::move(gamebegin_node_));
   gamebegin_node_ = nullptr;
   current_head_ = nullptr;
 }
+template class Node<float>;
+template class Node<double>;
+template class NodeTree<float>;
+template class NodeTree<double>;
 
 }  // namespace lczero

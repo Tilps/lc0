@@ -91,11 +91,11 @@ class SelfPlayGame {
   PlayerOptions options_[2];
   // Node tree for player1 and player2. If the tree is shared between players,
   // tree_[0] == tree_[1].
-  std::shared_ptr<NodeTree> tree_[2];
+  std::shared_ptr<NodeTree<float>> tree_[2];
 
   // Search that is currently in progress. Stored in members so that Abort()
   // can stop it.
-  std::unique_ptr<Search> search_;
+  std::unique_ptr<Search<float>> search_;
   bool abort_ = false;
   GameResult game_result_ = GameResult::UNDECIDED;
   // Track minimum eval for each player so that GetWorstEvalForWinnerOrDraw()

@@ -57,13 +57,13 @@ void SelfPlayGame::PopulateUciParams(OptionsParser* options) {
 SelfPlayGame::SelfPlayGame(PlayerOptions player1, PlayerOptions player2,
                            bool shared_tree)
     : options_{player1, player2} {
-  tree_[0] = std::make_shared<NodeTree>();
+  tree_[0] = std::make_shared<NodeTree<float>>();
   tree_[0]->ResetToPosition(ChessBoard::kStartposFen, {});
 
   if (shared_tree) {
     tree_[1] = tree_[0];
   } else {
-    tree_[1] = std::make_shared<NodeTree>();
+    tree_[1] = std::make_shared<NodeTree<float>>();
     tree_[1]->ResetToPosition(ChessBoard::kStartposFen, {});
   }
 }
@@ -92,7 +92,7 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (abort_) break;
-      search_ = std::make_unique<Search>(
+      search_ = std::make_unique<Search<float>>(
           *tree_[idx], options_[idx].network, options_[idx].best_move_callback,
           options_[idx].info_callback, options_[idx].search_limits,
           *options_[idx].uci_options, options_[idx].cache, nullptr);
@@ -166,7 +166,7 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
 std::vector<Move> SelfPlayGame::GetMoves() const {
   std::vector<Move> moves;
   bool flip = !tree_[0]->IsBlackToMove();
-  for (Node* node = tree_[0]->GetCurrentHead();
+  for (auto* node = tree_[0]->GetCurrentHead();
        node != tree_[0]->GetGameBeginNode(); node = node->GetParent()) {
     moves.push_back(node->GetParent()->GetEdgeToNode(node)->GetMove(flip));
     flip = !flip;

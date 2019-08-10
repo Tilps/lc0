@@ -55,10 +55,12 @@ struct SearchLimits {
 
   std::string DebugString() const;
 };
-
+template <typename Q_Type>
+class SearchWorker;
+template<typename Q_Type>
 class Search {
  public:
-  Search(const NodeTree& tree, Network* network,
+  Search(const NodeTree<Q_Type>& tree, Network* network,
          BestMoveInfo::Callback best_move_callback,
          ThinkingInfo::Callback info_callback, const SearchLimits& limits,
          const OptionsDict& options, NNCache* cache,
@@ -103,10 +105,10 @@ class Search {
   // Returns a child with most visits, with or without temperature.
   // NoTemperature is safe to use on non-extended nodes, while WithTemperature
   // accepts only nodes with at least 1 visited child.
-  EdgeAndNode GetBestChildNoTemperature(Node* parent) const;
-  std::vector<EdgeAndNode> GetBestChildrenNoTemperature(Node* parent,
+  EdgeAndNode<Q_Type> GetBestChildNoTemperature(Node<Q_Type>* parent) const;
+  std::vector<EdgeAndNode<Q_Type>> GetBestChildrenNoTemperature(Node<Q_Type>* parent,
                                                         int count) const;
-  EdgeAndNode GetBestChildWithTemperature(Node* parent,
+  EdgeAndNode<Q_Type> GetBestChildWithTemperature(Node<Q_Type>* parent,
                                           float temperature) const;
 
   int64_t GetTimeSinceStart() const;
@@ -129,11 +131,11 @@ class Search {
   bool PopulateRootMoveLimit(MoveList* root_moves) const;
 
   // Returns verbose information about given node, as vector of strings.
-  std::vector<std::string> GetVerboseStats(Node* node,
+  std::vector<std::string> GetVerboseStats(Node<Q_Type>* node,
                                            bool is_black_to_move) const;
 
   // Returns NN eval for a given node from cache, if that node is cached.
-  NNCacheLock GetCachedNNEval(Node* node) const;
+  NNCacheLock GetCachedNNEval(Node<Q_Type>* node) const;
 
   mutable Mutex counters_mutex_ ACQUIRED_AFTER(nodes_mutex_);
   // Tells all threads to stop.
@@ -151,13 +153,13 @@ class Search {
   bool only_one_possible_move_left_ GUARDED_BY(counters_mutex_) = false;
   // Stored so that in the case of non-zero temperature GetBestMove() returns
   // consistent results.
-  EdgeAndNode final_bestmove_ GUARDED_BY(counters_mutex_);
-  EdgeAndNode final_pondermove_ GUARDED_BY(counters_mutex_);
+  EdgeAndNode<Q_Type> final_bestmove_ GUARDED_BY(counters_mutex_);
+  EdgeAndNode<Q_Type> final_pondermove_ GUARDED_BY(counters_mutex_);
 
   Mutex threads_mutex_;
   std::vector<std::thread> threads_ GUARDED_BY(threads_mutex_);
 
-  Node* root_node_;
+  Node<Q_Type>* root_node_;
   NNCache* cache_;
   SyzygyTablebase* syzygy_tb_;
   // Fixed positions which happened before the search.
@@ -170,7 +172,7 @@ class Search {
   optional<std::chrono::steady_clock::time_point> nps_start_time_;
 
   mutable SharedMutex nodes_mutex_;
-  EdgeAndNode current_best_edge_ GUARDED_BY(nodes_mutex_);
+  EdgeAndNode<Q_Type> current_best_edge_ GUARDED_BY(nodes_mutex_);
   Edge* last_outputted_info_edge_ GUARDED_BY(nodes_mutex_) = nullptr;
   ThinkingInfo last_outputted_uci_info_ GUARDED_BY(nodes_mutex_);
   int64_t total_playouts_ GUARDED_BY(nodes_mutex_) = 0;
@@ -193,15 +195,16 @@ class Search {
   ThinkingInfo::Callback info_callback_;
   const SearchParams params_;
 
-  friend class SearchWorker;
+  friend class SearchWorker<Q_Type>;
 };
 
 // Single thread worker of the search engine.
 // That used to be just a function Search::Worker(), but to parallelize it
 // within one thread, have to split into stages.
+template<typename Q_Type>
 class SearchWorker {
  public:
-  SearchWorker(Search* search, const SearchParams& params)
+  SearchWorker(Search<Q_Type>* search, const SearchParams& params)
       : search_(search), history_(search_->played_history_), params_(params) {}
 
   // Runs iterations while needed.
@@ -256,7 +259,7 @@ class SearchWorker {
     }
 
     // The node to extend.
-    Node* node;
+    Node<Q_Type>* node;
     // Value from NN's value head, or -1/0/1 for terminal nodes.
     float v;
     // Draw probability for NN's with WDL value head
@@ -267,16 +270,16 @@ class SearchWorker {
     bool is_cache_hit = false;
     bool is_collision = false;
 
-    static NodeToProcess Collision(Node* node, uint16_t depth,
+    static NodeToProcess Collision(Node<Q_Type>* node, uint16_t depth,
                                    int collision_count) {
       return NodeToProcess(node, depth, true, collision_count);
     }
-    static NodeToProcess Visit(Node* node, uint16_t depth) {
+    static NodeToProcess Visit(Node<Q_Type>* node, uint16_t depth) {
       return NodeToProcess(node, depth, false, 1);
     }
 
    private:
-    NodeToProcess(Node* node, uint16_t depth, bool is_collision, int multivisit)
+    NodeToProcess(Node<Q_Type>* node, uint16_t depth, bool is_collision, int multivisit)
         : node(node),
           multivisit(multivisit),
           depth(depth),
@@ -284,14 +287,14 @@ class SearchWorker {
   };
 
   NodeToProcess PickNodeToExtend(int collision_limit);
-  void ExtendNode(Node* node);
-  bool AddNodeToComputation(Node* node, bool add_if_cached);
-  int PrefetchIntoCache(Node* node, int budget);
+  void ExtendNode(Node<Q_Type>* node);
+  bool AddNodeToComputation(Node<Q_Type>* node, bool add_if_cached);
+  int PrefetchIntoCache(Node<Q_Type>* node, int budget);
   void FetchSingleNodeResult(NodeToProcess* node_to_process,
                              int idx_in_computation);
   void DoBackupUpdateSingleNode(const NodeToProcess& node_to_process);
 
-  Search* const search_;
+  Search<Q_Type>* const search_;
   // List of nodes to process.
   std::vector<NodeToProcess> minibatch_;
   std::unique_ptr<CachingComputation> computation_;
@@ -301,7 +304,7 @@ class SearchWorker {
   bool root_move_filter_populated_ = false;
   int number_out_of_order_ = 0;
   const SearchParams& params_;
-  std::unique_ptr<Node> precached_node_;
+  std::unique_ptr<Node<Q_Type>> precached_node_;
 };
 
 }  // namespace lczero
