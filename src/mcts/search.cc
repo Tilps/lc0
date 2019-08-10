@@ -502,6 +502,16 @@ std::pair<Move, Move> Search<Q_Type>::GetBestMove() {
 }
 
 template <typename Q_Type>
+std::pair<Move, Move> Search<Q_Type>::GetBestMoveNoTemperature() {
+  SharedMutex::Lock lock(nodes_mutex_);
+  Mutex::Lock counters_lock(counters_mutex_);
+  EnsureBestMoveKnown();
+  EdgeAndNode<Q_Type> best_edge = GetBestChildNoTemperature(root_node_);
+  return {best_edge.GetMove(played_history_.IsBlackToMove()),
+          final_pondermove_.GetMove(!played_history_.IsBlackToMove())};
+}
+
+template <typename Q_Type>
 std::int64_t Search<Q_Type>::GetTotalPlayouts() const {
   SharedMutex::SharedLock lock(nodes_mutex_);
   return total_playouts_;

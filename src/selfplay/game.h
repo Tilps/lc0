@@ -85,6 +85,10 @@ class SelfPlayGame {
   float GetWorstEvalForWinnerOrDraw() const;
   int move_count_ = 0;
   uint64_t nodes_total_ = 0;
+  int randomness_change_ = 0;
+  int double_changed_ = 0;
+  int double_changed_both_ = 0;
+  int double_changed_triple_ = 0;
 
  private:
   // options_[0] is for white player, [1] for black.
@@ -92,10 +96,14 @@ class SelfPlayGame {
   // Node tree for player1 and player2. If the tree is shared between players,
   // tree_[0] == tree_[1].
   std::shared_ptr<NodeTree<float>> tree_[2];
+  std::shared_ptr<NodeTree<float>> tree2_[2];
+  std::shared_ptr<NodeTree<double>> tree3_[2];
 
   // Search that is currently in progress. Stored in members so that Abort()
   // can stop it.
   std::unique_ptr<Search<float>> search_;
+  std::unique_ptr<Search<float>> search2_;
+  std::unique_ptr<Search<double>> search3_;
   bool abort_ = false;
   GameResult game_result_ = GameResult::UNDECIDED;
   // Track minimum eval for each player so that GetWorstEvalForWinnerOrDraw()

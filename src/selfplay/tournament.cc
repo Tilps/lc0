@@ -197,14 +197,14 @@ void SelfPlayTournament::PlayOneGame(int game_number) {
                               &last_thinking_info](const BestMoveInfo& info) {
       // In non-verbose mode, output the last "info" message.
       if (!verbose_thinking && !last_thinking_info.empty()) {
-        info_callback_(last_thinking_info);
+        //info_callback_(last_thinking_info);
         last_thinking_info.clear();
       }
       BestMoveInfo rich_info = info;
       rich_info.player = pl_idx + 1;
       rich_info.is_black = player1_black ? pl_idx == 0 : pl_idx != 0;
       rich_info.game_id = game_number;
-      best_move_callback_(rich_info);
+      //best_move_callback_(rich_info);
     };
 
     opt.info_callback =
@@ -275,6 +275,10 @@ void SelfPlayTournament::PlayOneGame(int game_number) {
       ++tournament_info_.results[result][player1_black ? 1 : 0];
       tournament_info_.move_count_ += game.move_count_;
       tournament_info_.nodes_total_ += game.nodes_total_;
+      tournament_info_.randomness_change_ += game.randomness_change_;
+      tournament_info_.double_changed_ += game.double_changed_;
+      tournament_info_.double_changed_both_ += game.double_changed_both_;
+      tournament_info_.double_changed_triple_ += game.double_changed_triple_;
       tournament_callback_(tournament_info_);
     }
   }

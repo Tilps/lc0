@@ -59,12 +59,22 @@ SelfPlayGame::SelfPlayGame(PlayerOptions player1, PlayerOptions player2,
     : options_{player1, player2} {
   tree_[0] = std::make_shared<NodeTree<float>>();
   tree_[0]->ResetToPosition(ChessBoard::kStartposFen, {});
+  tree2_[0] = std::make_shared<NodeTree<float>>();
+  tree2_[0]->ResetToPosition(ChessBoard::kStartposFen, {});
+  tree3_[0] = std::make_shared<NodeTree<double>>();
+  tree3_[0]->ResetToPosition(ChessBoard::kStartposFen, {});
 
   if (shared_tree) {
     tree_[1] = tree_[0];
+    tree2_[1] = tree2_[0];
+    tree3_[1] = tree3_[0];
   } else {
     tree_[1] = std::make_shared<NodeTree<float>>();
     tree_[1]->ResetToPosition(ChessBoard::kStartposFen, {});
+    tree2_[1] = std::make_shared<NodeTree<float>>();
+    tree2_[1]->ResetToPosition(ChessBoard::kStartposFen, {});
+    tree3_[1] = std::make_shared<NodeTree<double>>();
+    tree3_[1]->ResetToPosition(ChessBoard::kStartposFen, {});
   }
 }
 
@@ -83,6 +93,8 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
     const int idx = blacks_move ? 1 : 0;
     if (!options_[idx].uci_options->Get<bool>(kReuseTreeId.GetId())) {
       tree_[idx]->TrimTreeAtHead();
+      tree2_[idx]->TrimTreeAtHead();
+      tree3_[idx]->TrimTreeAtHead();
     }
     if (options_[idx].search_limits.movetime > -1) {
       options_[idx].search_limits.search_deadline =
@@ -96,11 +108,21 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
           *tree_[idx], options_[idx].network, options_[idx].best_move_callback,
           options_[idx].info_callback, options_[idx].search_limits,
           *options_[idx].uci_options, options_[idx].cache, nullptr);
+      search2_ = std::make_unique<Search<float>>(
+          *tree2_[idx], options_[idx].network, options_[idx].best_move_callback,
+          options_[idx].info_callback, options_[idx].search_limits,
+          *options_[idx].uci_options, options_[idx].cache, nullptr);
+      search3_ = std::make_unique<Search<double>>(
+          *tree3_[idx], options_[idx].network, options_[idx].best_move_callback,
+          options_[idx].info_callback, options_[idx].search_limits,
+          *options_[idx].uci_options, options_[idx].cache, nullptr);
       // TODO: add Syzygy option for selfplay.
     }
 
     // Do search.
     search_->RunBlocking(blacks_move ? black_threads : white_threads);
+    search2_->RunBlocking(blacks_move ? black_threads : white_threads);
+    search3_->RunBlocking(blacks_move ? black_threads : white_threads);
     move_count_++;
     nodes_total_ += search_->GetTotalPlayouts();
     if (abort_) break;
@@ -154,11 +176,24 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
         }
       }
     }
+    { 
+      const Move ntm = search_->GetBestMoveNoTemperature().first;
+      const Move ntm2 = search2_->GetBestMoveNoTemperature().first;
+      const Move ntm3 = search3_->GetBestMoveNoTemperature().first;
+      if (ntm != ntm2) randomness_change_++;
+      if (ntm != ntm3) double_changed_++;
+      if (ntm != ntm3 && ntm2 != ntm3) double_changed_both_++;
+      if (ntm != ntm3 && ntm2 != ntm3 && ntm != ntm2) double_changed_triple_++;
+    }
 
     // Add best move to the tree.
     const Move move = search_->GetBestMove().first;
     tree_[0]->MakeMove(move);
     if (tree_[0] != tree_[1]) tree_[1]->MakeMove(move);
+    tree2_[0]->MakeMove(move);
+    if (tree2_[0] != tree2_[1]) tree2_[1]->MakeMove(move);
+    tree3_[0]->MakeMove(move);
+    if (tree3_[0] != tree3_[1]) tree3_[1]->MakeMove(move);
     blacks_move = !blacks_move;
   }
 }

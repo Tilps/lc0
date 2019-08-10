@@ -176,6 +176,10 @@ void SelfPlayLoop::SendTournament(const TournamentInfo& info) {
   oss << " npm " + std::to_string(static_cast<double>(info.nodes_total_) / info.move_count_);
   oss << " nodes " + std::to_string(info.nodes_total_);
   oss << " moves " + std::to_string(info.move_count_);
+  oss << " random " + std::to_string(info.randomness_change_);
+  oss << " d_changed " + std::to_string(info.double_changed_);
+  oss << " d_changed_both " + std::to_string(info.double_changed_both_);
+  oss << " d_changed_tri " + std::to_string(info.double_changed_triple_);
   SendResponse(oss.str());
 }
 

@@ -120,6 +120,10 @@ struct TournamentInfo {
   using Callback = std::function<void(const TournamentInfo&)>;
   int move_count_ = 0;
   uint64_t nodes_total_ = 0;
+  int randomness_change_ = 0;
+  int double_changed_ = 0;
+  int double_changed_both_ = 0;
+  int double_changed_triple_ = 0;
 };
 
 }  // namespace lczero
