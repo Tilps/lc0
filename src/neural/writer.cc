@@ -98,6 +98,7 @@ bool TrainingDataReader::ReadChunk(V5TrainingData* data) {
     int read_size = gzread(fin_, reinterpret_cast<void*>(data), v3_size);
     if (read_size < 0) throw Exception("Corrupt read.");
     if (read_size != v3_size) return false;
+    auto orig_version = data->version;
     switch (data->version) {
       case 3: {
         data->version = 4;
@@ -110,11 +111,20 @@ bool TrainingDataReader::ReadChunk(V5TrainingData* data) {
         // Deliberate fallthrough.
       }
       case 4: {
+        // If actually 4, we need to read the additional data first.
+        if (orig_version == 4) {
+          read_size = gzread(
+              fin_,
+              reinterpret_cast<void*>(reinterpret_cast<char*>(data) + v3_size),
+              v4_extra);
+          if (read_size < 0) throw Exception("Corrupt read.");
+          if (read_size != v4_extra) return false;
+        }
         data->version = 5;
         char* data_ptr = reinterpret_cast<char*>(data);
         // Shift data after version back 4 bytes.
         memmove(data_ptr + 2 * sizeof(uint32_t), data_ptr + sizeof(uint32_t),
-                v3_size + v4_extra);
+                v3_size + v4_extra - sizeof(uint32_t));
         data->input_format = pblczero::NetworkFormat::INPUT_CLASSICAL_112_PLANE;
         data->root_m = 0.0f;
         data->best_m = 0.0f;
