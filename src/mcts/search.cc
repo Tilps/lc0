@@ -398,14 +398,16 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
 // Return the evaluation of the actual best child, regardless of temperature
 // settings. This differs from GetBestMove, which does obey any temperature
 // settings. So, somethimes, they may return results of different moves.
-std::pair<float, float> Search::GetBestEval() const {
+std::pair<std::pair<float, float>, float> Search::GetBestEval() const {
   SharedMutex::SharedLock lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   float parent_wl = -root_node_->GetWL();
   float parent_d = root_node_->GetD();
-  if (!root_node_->HasChildren()) return {parent_wl, parent_d};
+  float parent_m = root_node_->GetM();
+  if (!root_node_->HasChildren()) return {{parent_wl, parent_d}, parent_m};
   EdgeAndNode best_edge = GetBestChildNoTemperature(root_node_);
-  return {best_edge.GetWL(), best_edge.GetD()};
+  return {{best_edge.GetWL(), best_edge.GetD()},
+          best_edge.GetM(parent_m - 1) + 1};
 }
 
 std::pair<Move, Move> Search::GetBestMove() {
@@ -775,8 +777,8 @@ void SearchWorker::ExecuteOneIteration() {
         break;
       }
       // This is a hard spin lock to reduce latency but at the expense of busy
-      // wait cpu usage. If search worker count is large, this is probably a bad
-      // idea.
+      // wait cpu usage. If search worker count is large, this is probably a
+      // bad idea.
     }
   }
 
@@ -835,7 +837,8 @@ void SearchWorker::GatherMinibatch() {
   // that search can exit.
   while (minibatch_size < params_.GetMiniBatchSize() &&
          number_out_of_order_ < params_.GetMaxOutOfOrderEvals()) {
-    // If there's something to process without touching slow neural net, do it.
+    // If there's something to process without touching slow neural net, do
+    // it.
     if (minibatch_size > 0 && computation_->GetCacheMisses() == 0) return;
     // Pick next node to extend.
     minibatch_.emplace_back(PickNodeToExtend(collisions_left));
@@ -959,8 +962,8 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend(
     }
     Node* possible_shortcut_child = node->GetCachedBestChild();
     if (possible_shortcut_child) {
-      // Add two here to reverse the conservatism that goes into calculating the
-      // remaining cache visits.
+      // Add two here to reverse the conservatism that goes into calculating
+      // the remaining cache visits.
       collision_limit =
           std::min(collision_limit, node->GetRemainingCacheVisits() + 2);
       is_root_node = false;
@@ -1035,8 +1038,8 @@ SearchWorker::NodeToProcess SearchWorker::PickNodeToExtend(
       int estimated_visits_to_change_best = best_edge.GetVisitsToReachU(
           second_best, puct_mult, fpu, draw_score, params_.GetLogitQ());
       // Only cache for n-2 steps as the estimate created by GetVisitsToReachU
-      // has potential rounding errors and some conservative logic that can push
-      // it up to 2 away from the real value.
+      // has potential rounding errors and some conservative logic that can
+      // push it up to 2 away from the real value.
       node->UpdateBestChild(best_edge,
                             std::max(0, estimated_visits_to_change_best - 2));
       collision_limit =
@@ -1053,8 +1056,8 @@ void SearchWorker::ExtendNode(Node* node) {
   // Initialize position sequence with pre-move position.
   history_.Trim(search_->played_history_.GetLength());
   std::vector<Move> to_add;
-  // Could instead reserve one more than the difference between history_.size()
-  // and history_.capacity().
+  // Could instead reserve one more than the difference between
+  // history_.size() and history_.capacity().
   to_add.reserve(60);
   Node* cur = node;
   while (cur != search_->root_node_) {
@@ -1101,7 +1104,8 @@ void SearchWorker::ExtendNode(Node* node) {
       return;
     }
 
-    // Neither by-position or by-rule termination, but maybe it's a TB position.
+    // Neither by-position or by-rule termination, but maybe it's a TB
+    // position.
     if (search_->syzygy_tb_ && board.castlings().no_legal_castle() &&
         history_.Last().GetNoCaptureNoPawnPly() == 0 &&
         (board.ours() | board.theirs()).count() <=
@@ -1370,7 +1374,8 @@ void SearchWorker::DoBackupUpdateSingleNode(
     return;
   }
 
-  // For the first visit to a terminal, maybe convert ancestors to terminal too.
+  // For the first visit to a terminal, maybe convert ancestors to terminal
+  // too.
   auto can_convert =
       params_.GetStickyEndgames() && node->IsTerminal() && !node->GetN();
 
@@ -1395,7 +1400,8 @@ void SearchWorker::DoBackupUpdateSingleNode(
     // Nothing left to do without ancestors to update.
     if (!p) break;
 
-    // Convert parents to terminals except the root or those already converted.
+    // Convert parents to terminals except the root or those already
+    // converted.
     can_convert = can_convert && p != search_->root_node_ && !p->IsTerminal();
 
     // A non-winning terminal move needs all other moves to be similar.
@@ -1413,9 +1419,9 @@ void SearchWorker::DoBackupUpdateSingleNode(
       }
     }
 
-    // Convert the parent to a terminal loss if at least one move is winning or
-    // to a terminal win if all moves are losing; otherwise there's a mix of
-    // draws and losing, so at best it's a draw.
+    // Convert the parent to a terminal loss if at least one move is winning
+    // or to a terminal win if all moves are losing; otherwise there's a mix
+    // of draws and losing, so at best it's a draw.
     if (can_convert) {
       // Doesn't give the correct distance to mate because siblings are not
       // considered but more accurate than doing nothing. This shouldn't
@@ -1455,8 +1461,8 @@ void SearchWorker::UpdateCounters() {
   search_->MaybeOutputInfo();
 
   // If this thread had no work, not even out of order, then sleep for some
-  // milliseconds. Collisions don't count as work, so have to enumerate to find
-  // out if there was anything done.
+  // milliseconds. Collisions don't count as work, so have to enumerate to
+  // find out if there was anything done.
   bool work_done = number_out_of_order_ > 0;
   if (!work_done) {
     for (NodeToProcess& node_to_process : minibatch_) {
