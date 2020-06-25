@@ -41,6 +41,7 @@
 #include "proto/net.pb.h"
 #include "utils/fastmath.h"
 #include "utils/mutex.h"
+#include <xmmintrin.h>
 
 namespace lczero {
 
@@ -276,7 +277,9 @@ class Node {
 
   // To minimize the number of padding bytes and to avoid having unnecessary
   // padding when new fields are added, we arrange the fields by size, largest
-  // to smallest.
+  // to smallest. With some exceptions for performance optimization. This first
+  // section should be no more than 64 bytes to allow it to fit into a cache line
+  // and it must contain all variables referenced within the inner loop of the picker.
 
   // 8 byte fields.
   // Average value (from value head of neural network) of all visited nodes in
@@ -289,17 +292,12 @@ class Node {
   // 8 byte fields on 64-bit platforms, 4 byte on 32-bit.
   // Array of edges.
   std::unique_ptr<Edge[]> edges_;
-  // Pointer to a parent node. nullptr for the root.
-  Node* parent_ = nullptr;
   // Pointer to a first child. nullptr for a leaf node.
   // As a 'hack' actually a unique_ptr to Node[] if solid_children.
   std::unique_ptr<Node> child_;
   // Pointer to a next sibling. nullptr if there are no further siblings.
   // Also null in the solid case.
   std::unique_ptr<Node> sibling_;
-  // Cached pointer to best child, valid while n_in_flight <
-  // best_child_cache_in_flight_limit_
-  Node* best_child_cached_ = nullptr;
 
   // 4 byte fields.
   // Averaged draw probability. Works similarly to WL, except that D is not
@@ -335,6 +333,15 @@ class Node {
   GameResult upper_bound_ : 2;
   // Whether the child_ is actually an array of equal length to edges.
   bool solid_children_ : 1;
+
+  // These parts moved to end as they are not referenced in the inner loop and
+  // allow for index_/sibling_/q_/d_/m_/n_/n_in_flight_ to be in the first 64 bytes.
+
+  // Cached pointer to best child, valid while n_in_flight <
+  // best_child_cache_in_flight_limit_
+  Node* best_child_cached_ = nullptr;
+  // Pointer to a parent node. nullptr for the root.
+  Node* parent_ = nullptr;
 
   // TODO(mooskagh) Unfriend NodeTree.
   friend class NodeTree;
@@ -551,6 +558,9 @@ class Edge_Iterator : public EdgeAndNode {
     if (*node_ptr_ && (*node_ptr_)->index_ == current_idx_) {
       node_ = (*node_ptr_).get();
       node_ptr_ = &node_->sibling_;
+      // It is rare for an edge loop to be aborted early, so start bringing in the next node now as it will be needed eventually.
+      _mm_prefetch(reinterpret_cast<const char*>((*node_ptr_).get()),
+                   _MM_HINT_NTA);
     } else {
       node_ = nullptr;
     }
