@@ -157,9 +157,6 @@ SelfPlayTournament::SelfPlayTournament(
     PgnReader book_reader;
     book_reader.AddPgnFile(book);
     openings_ = book_reader.ReleaseGames();
-    if (options.Get<std::string>(kOpeningsModeId) == "shuffled") {
-      Random::Get().Shuffle(openings_.begin(), openings_.end());
-    }
   }
   // If playing just one game, the player1 is white, otherwise randomize.
   if (kTotalGames != 1) {
@@ -176,219 +173,48 @@ SelfPlayTournament::SelfPlayTournament(
       }
     }
   }
+  for (int i = 0; i < openings_.size(); i += 320) {
+    auto comp = networks_.begin()->second->NewComputation();
+    std::vector<std::shared_ptr<NodeTree>> trees;
+    for (int j = i; j < openings_.size() && j < i + 320; j++) {
+      auto tree = std::make_shared<NodeTree>();
+      trees.push_back(tree);
+      tree->ResetToPosition(openings_[j].start_fen, {});
 
-  // Initializing cache.
-  cache_[0] = std::make_shared<NNCache>(
-      options.GetSubdict("player1").Get<int>(kNNCacheSizeId));
-  if (kShareTree) {
-    cache_[1] = cache_[0];
-  } else {
-    cache_[1] = std::make_shared<NNCache>(
-        options.GetSubdict("player2").Get<int>(kNNCacheSizeId));
-  }
-
-  // SearchLimits.
-  static constexpr const char* kPlayerNames[2] = {"player1", "player2"};
-  static constexpr const char* kPlayerColors[2] = {"white", "black"};
-  for (int name_idx : {0, 1}) {
-    for (int color_idx : {0, 1}) {
-      auto& limits = search_limits_[name_idx][color_idx];
-      const auto& dict = options.GetSubdict(kPlayerNames[name_idx])
-                             .GetSubdict(kPlayerColors[color_idx]);
-      limits.playouts = dict.Get<int>(kPlayoutsId);
-      limits.visits = dict.Get<int>(kVisitsId);
-      limits.movetime = dict.Get<int>(kTimeMsId);
-
-      if (limits.playouts == -1 && limits.visits == -1 &&
-          limits.movetime == -1) {
-        throw Exception(
-            "Please define --visits, --playouts or --movetime, otherwise it's "
-            "not clear when to stop search.");
+      for (Move m : openings_[j].moves) {
+        tree->MakeMove(m);
       }
+      const auto& history = tree->GetPositionHistory();
+      if (history.ComputeGameResult() == GameResult::UNDECIDED) {
+        int transform;
+        auto planes = EncodePositionForNN(
+            networks_.begin()->second->GetCapabilities().input_format, history,
+            8,
+            FillEmptyHistory::FEN_ONLY, &transform);
+        comp->AddInput(std::move(planes));
+      } 
     }
-  }
-}
-
-void SelfPlayTournament::PlayOneGame(int game_number) {
-  bool player1_black;  // Whether player1 will player as black in this game.
-  Opening opening;
-  {
-    Mutex::Lock lock(mutex_);
-    player1_black = ((game_number % 2) == 1) != first_game_black_;
-    if (!openings_.empty()) {
-      if (player_options_[0][0].Get<bool>(kOpeningsMirroredId)) {
-        opening = openings_[(game_number / 2) % openings_.size()];
-      } else if (player_options_[0][0].Get<std::string>(kOpeningsModeId) ==
-                 "random") {
-        opening = openings_[Random::Get().GetInt(0, openings_.size() - 1)];
+    comp->ComputeBlocking();
+    int compIndex = 0;
+    for (int j = i; j < openings_.size() && j < i + 320; j++) {
+      auto tree = trees[j - i];
+      const auto& history = tree->GetPositionHistory();
+      if (history.ComputeGameResult() == GameResult::UNDECIDED) {
+        std::cout << "Opening: " << j << " Q: " << comp->GetQVal(compIndex)
+                  << " D: " << comp->GetDVal(compIndex) << std::endl;
+        compIndex++;
       } else {
-        opening = openings_[game_number % openings_.size()];
+        std::cout << "Opening: " << j << " is already decided!!" << std::endl;
       }
-    }
-    if (discard_pile_.size() > 0 &&
-        Random::Get().GetFloat(100.0f) < kDiscardedStartChance) {
-      const size_t idx = Random::Get().GetInt(0, discard_pile_.size() - 1);
-      if (idx != discard_pile_.size() - 1) {
-        std::swap(discard_pile_[idx], discard_pile_.back());
-      }
-      opening = discard_pile_.back();
-      discard_pile_.pop_back();
-    }
-  }
-  const int color_idx[2] = {player1_black ? 1 : 0, player1_black ? 0 : 1};
-
-  PlayerOptions options[2];
-
-  std::vector<ThinkingInfo> last_thinking_info;
-  for (int pl_idx : {0, 1}) {
-    const int color = color_idx[pl_idx];
-    const bool verbose_thinking =
-        player_options_[pl_idx][color].Get<bool>(kVerboseThinkingId);
-    const bool move_thinking =
-        player_options_[pl_idx][color].Get<bool>(kMoveThinkingId);
-    // Populate per-player options.
-    PlayerOptions& opt = options[color_idx[pl_idx]];
-    opt.network = networks_[NetworkFactory::BackendConfiguration(
-                                player_options_[pl_idx][color])]
-                      .get();
-    opt.cache = cache_[pl_idx].get();
-    opt.uci_options = &player_options_[pl_idx][color];
-    opt.search_limits = search_limits_[pl_idx][color];
-
-    // "bestmove" callback.
-    opt.best_move_callback = [this, game_number, pl_idx, player1_black,
-                              verbose_thinking, move_thinking,
-                              &last_thinking_info](const BestMoveInfo& info) {
-      if (!move_thinking) {
-        last_thinking_info.clear();
-        return;
-      }
-      // In non-verbose mode, output the last "info" message.
-      if (!verbose_thinking && !last_thinking_info.empty()) {
-        info_callback_(last_thinking_info);
-        last_thinking_info.clear();
-      }
-      BestMoveInfo rich_info = info;
-      rich_info.player = pl_idx + 1;
-      rich_info.is_black = player1_black ? pl_idx == 0 : pl_idx != 0;
-      rich_info.game_id = game_number;
-      best_move_callback_(rich_info);
-    };
-
-    opt.info_callback =
-        [this, game_number, pl_idx, player1_black, verbose_thinking,
-         &last_thinking_info](const std::vector<ThinkingInfo>& infos) {
-          std::vector<ThinkingInfo> rich_info = infos;
-          for (auto& info : rich_info) {
-            info.player = pl_idx + 1;
-            info.is_black = player1_black ? pl_idx == 0 : pl_idx != 0;
-            info.game_id = game_number;
-          }
-          if (verbose_thinking) {
-            info_callback_(rich_info);
-          } else {
-            // In non-verbose mode, remember the last "info" messages.
-            last_thinking_info = std::move(rich_info);
-          }
-        };
-    opt.discarded_callback = [this](const Opening& moves) {
-      // Only track discards if discard start chance is non-zero.
-      if (kDiscardedStartChance == 0.0f) return;
-      Mutex::Lock lock(mutex_);
-      discard_pile_.push_back(moves);
-      // 10k seems it should be enough to keep a good mix and avoid running out
-      // of ram.
-      if (discard_pile_.size() > 10000) {
-        // Swap a random element to end and pop it to avoid growing.
-        const size_t idx = Random::Get().GetInt(0, discard_pile_.size() - 1);
-        if (idx != discard_pile_.size() - 1) {
-          std::swap(discard_pile_[idx], discard_pile_.back());
-        }
-        discard_pile_.pop_back();
-      }
-    };
-  }
-
-  // Iterator to store the game in. Have to keep it so that later we can
-  // delete it. Need to expose it in games_ member variable only because
-  // of possible Abort() that should stop them all.
-  std::list<std::unique_ptr<SelfPlayGame>>::iterator game_iter;
-  {
-    Mutex::Lock lock(mutex_);
-    games_.emplace_front(std::make_unique<SelfPlayGame>(options[0], options[1],
-                                                        kShareTree, opening));
-    game_iter = games_.begin();
-  }
-  auto& game = **game_iter;
-
-  // If kResignPlaythrough == 0, then this comparison is unconditionally true
-  const bool enable_resign =
-      Random::Get().GetFloat(100.0f) >= kResignPlaythrough;
-
-  // PLAY GAME!
-  auto player1_threads = player_options_[0][color_idx[0]].Get<int>(kThreadsId);
-  auto player2_threads = player_options_[1][color_idx[1]].Get<int>(kThreadsId);
-  game.Play(player1_threads, player2_threads, kTraining, enable_resign);
-
-  // If game was aborted, it's still undecided.
-  if (game.GetGameResult() != GameResult::UNDECIDED) {
-    // Game callback.
-    GameInfo game_info;
-    game_info.game_result = game.GetGameResult();
-    game_info.is_black = player1_black;
-    game_info.game_id = game_number;
-    game_info.initial_fen = opening.start_fen;
-    game_info.moves = game.GetMoves();
-    game_info.play_start_ply = opening.moves.size();
-    if (!enable_resign) {
-      game_info.min_false_positive_threshold =
-          game.GetWorstEvalForWinnerOrDraw();
-    }
-    if (kTraining) {
-      TrainingDataWriter writer(game_number);
-      game.WriteTrainingData(&writer);
-      writer.Finalize();
-      game_info.training_filename = writer.GetFileName();
-    }
-    game_callback_(game_info);
-
-    // Update tournament stats.
-    {
-      Mutex::Lock lock(mutex_);
-      int result = game.GetGameResult() == GameResult::DRAW
-                       ? 1
-                       : game.GetGameResult() == GameResult::WHITE_WON ? 0 : 2;
-      if (player1_black) result = 2 - result;
-      ++tournament_info_.results[result][player1_black ? 1 : 0];
-      tournament_info_.move_count_ += game.move_count_;
-      tournament_info_.nodes_total_ += game.nodes_total_;
-      tournament_callback_(tournament_info_);
     }
   }
 
-  {
-    Mutex::Lock lock(mutex_);
-    games_.erase(game_iter);
-  }
 }
+
+void SelfPlayTournament::PlayOneGame(int game_number) { return; }
 
 void SelfPlayTournament::Worker() {
-  // Play games while game limit is not reached (or while not aborted).
-  while (true) {
-    int game_id;
-    {
-      Mutex::Lock lock(mutex_);
-      if (abort_) break;
-      bool mirrored = player_options_[0][0].Get<bool>(kOpeningsMirroredId);
-      if ((kTotalGames >= 0 && games_count_ >= kTotalGames) ||
-          (kTotalGames == -2 && !openings_.empty() &&
-           games_count_ >=
-               static_cast<int>(openings_.size()) * (mirrored ? 2 : 1)))
-        break;
-      game_id = games_count_++;
-    }
-    PlayOneGame(game_id);
-  }
+  return;
 }
 
 void SelfPlayTournament::StartAsync() {
