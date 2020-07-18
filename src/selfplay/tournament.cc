@@ -173,6 +173,8 @@ SelfPlayTournament::SelfPlayTournament(
       }
     }
   }
+  int resignable = 0;
+  int broken = 0;
   for (int i = 0; i < openings_.size(); i += 320) {
     auto comp = networks_.begin()->second->NewComputation();
     std::vector<std::shared_ptr<NodeTree>> trees;
@@ -200,15 +202,35 @@ SelfPlayTournament::SelfPlayTournament(
       auto tree = trees[j - i];
       const auto& history = tree->GetPositionHistory();
       if (history.ComputeGameResult() == GameResult::UNDECIDED) {
-        std::cout << "Opening: " << j << " Q: " << comp->GetQVal(compIndex)
-                  << " D: " << comp->GetDVal(compIndex) << std::endl;
+        auto q = comp->GetQVal(compIndex);
+        auto d = comp->GetDVal(compIndex);
+        auto w = (q + 1.0f - d) / 2.0f;
+        auto l = w - q;
+        if (w > 0.96 || l > 0.96 ||  d > 0.96) resignable++; 
+        std::cout << "Opening: " << j << " Q: " << q
+                  << " D: " << d << std::endl;
+        MoveList moves;
+        Node* cur = tree->GetCurrentHead();
+        bool flip = !history.IsBlackToMove();
+        while (cur != tree->GetGameBeginNode()) {
+          moves.push_back(cur->GetParent()->GetEdgeToNode(cur)->GetMove(flip));
+          cur = cur->GetParent();
+          flip = !flip;
+        }
+        std::reverse(moves.begin(), moves.end());
+        for (auto move : moves) {
+          std::cout << move.as_string() << " ";
+        }
+        std::cout << std::endl;
         compIndex++;
       } else {
         std::cout << "Opening: " << j << " is already decided!!" << std::endl;
+        broken++;
       }
     }
   }
-
+  std::cout << "Resignable openings: " << resignable << std::endl;
+  std::cout << "Broken openings: " << broken << std::endl;
 }
 
 void SelfPlayTournament::PlayOneGame(int game_number) { return; }
