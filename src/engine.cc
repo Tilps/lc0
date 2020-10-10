@@ -297,6 +297,53 @@ void EngineController::Stop() {
   if (search_) search_->Stop();
 }
 
+void EngineController::Dump(int limit) {
+    // Walk tree, dumping training files from root to limit satisfying leaf with no limit satisfying children, for all such children.
+  Node* root = tree_->GetCurrentHead();
+    std::vector<Node*> path;
+  path.push_back(root);
+    int written = 0;
+  Dump(limit, &path, &written);
+}
+
+void EngineController::Dump(int limit, std::vector<Node*>* path, int* counter) {
+  Node* cur = path->back();
+  bool recursed = false;
+  for (auto& child : cur->Edges()) {
+    if (!child.HasNode()) continue;
+    // Skip terminals - we don't normally create training data for them.
+    if (child.IsTerminal()) continue;
+    if (child.GetN() >= limit) {
+      path->push_back(child.node());
+      Dump(limit, path, counter);
+      path->pop_back();
+      recursed = true;
+    }
+  }
+  if (!recursed) {
+    PositionHistory curHistory = tree_->GetPositionHistory();
+    std::vector<V5TrainingData> data;
+    for (int i = 0; i < path->size(); i++) {
+      Node* cur = (*path)[i];
+      data.push_back(cur->GetV5TrainingData(
+          GameResult::DRAW, curHistory, FillEmptyHistory::NO,
+          pblczero::NetworkFormat::InputFormat::
+              INPUT_112_WITH_CANONICALIZATION_HECTOPLIES,
+          cur->GetWL(), cur->GetD(), cur->GetM()));
+      data.back().plies_left = cur->GetM();
+      if (i < path->size() - 1) {
+        Node* next = (*path)[i + 1];
+        curHistory.Append(cur->GetEdgeToNode(next)->GetMove());
+      }
+    }
+    TrainingDataWriter writer(*counter);
+    for (auto& chunk : data) {
+      writer.WriteChunk(chunk);
+    }
+    ++(*counter);
+  }
+}
+
 EngineLoop::EngineLoop()
     : engine_(
           std::make_unique<CallbackUciResponder>(
@@ -349,5 +396,7 @@ void EngineLoop::CmdGo(const GoParams& params) { engine_.Go(params); }
 void EngineLoop::CmdPonderHit() { engine_.PonderHit(); }
 
 void EngineLoop::CmdStop() { engine_.Stop(); }
+
+void EngineLoop::CmdDump(int limit) { engine_.Dump(limit); }
 
 }  // namespace lczero

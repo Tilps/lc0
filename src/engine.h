@@ -74,7 +74,10 @@ class EngineController {
   // Must not block.
   void Stop();
 
+  void Dump(int limit);
+
  private:
+  void Dump(int limit, std::vector<Node*>* path, int* counter);
   void UpdateFromUciOptions();
 
   void SetupPosition(const std::string& fen,
@@ -129,6 +132,7 @@ class EngineLoop : public UciLoop {
   void CmdGo(const GoParams& params) override;
   void CmdPonderHit() override;
   void CmdStop() override;
+  void CmdDump(int limit) override;
 
  private:
   OptionsParser options_;

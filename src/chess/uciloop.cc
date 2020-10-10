@@ -59,6 +59,7 @@ const std::unordered_map<std::string, std::unordered_set<std::string>>
         {{"stop"}, {}},
         {{"ponderhit"}, {}},
         {{"quit"}, {}},
+        {{"dump"}, {"nodelimit"}},
         {{"xyzzy"}, {}},
 };
 
@@ -201,6 +202,8 @@ bool UciLoop::DispatchCommand(
     CmdPonderHit();
   } else if (command == "start") {
     CmdStart();
+  } else if (command == "dump") {
+    CmdDump(GetNumeric(params, "nodelimit"));
   } else if (command == "xyzzy") {
     SendResponse("Nothing happens.");
   } else if (command == "quit") {
