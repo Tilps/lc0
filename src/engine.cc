@@ -321,8 +321,32 @@ void EngineController::Dump(int limit, std::vector<Node*>* path, int* counter) {
     }
   }
   if (!recursed) {
-    PositionHistory curHistory = tree_->GetPositionHistory();
     std::vector<V5TrainingData> data;
+    PositionHistory curHistory = tree_->GetPositionHistory();
+    if (curHistory.GetLength() > 1) {
+      curHistory.Trim(1);
+    }
+    Node* initialCur = tree_->GetGameBeginNode();
+    while (initialCur != tree_->GetCurrentHead()) {
+      data.push_back(cur->GetV5TrainingData(
+          GameResult::DRAW, curHistory, FillEmptyHistory::NO,
+          pblczero::NetworkFormat::InputFormat::
+              INPUT_112_WITH_CANONICALIZATION_HECTOPLIES,
+          initialCur->GetWL(), initialCur->GetD(), initialCur->GetM()));
+      data.back().plies_left = initialCur->GetM();
+      // Store a flag so rescorer can filter out these padding positions.
+      data.back().invariance_info |= 64;
+      // Each node should only have one child until we get to current head.
+      Node* next = nullptr;
+      for (auto& child : initialCur->Edges()) {
+        if (!child.HasNode()) continue;
+        next = child.node();        
+        break;
+      }
+      curHistory.Append(initialCur->GetEdgeToNode(next)->GetMove());
+      initialCur = next;
+    }
+    curHistory = tree_->GetPositionHistory();
     for (int i = 0; i < path->size(); i++) {
       Node* cur = (*path)[i];
       data.push_back(cur->GetV5TrainingData(
