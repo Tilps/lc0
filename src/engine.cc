@@ -64,6 +64,8 @@ const OptionId kStrictUciTiming{"strict-uci-timing", "StrictTiming",
                                 "The UCI host compensates for lag, waits for "
                                 "the 'readyok' reply before sending 'go' and "
                                 "only then starts timing."};
+const OptionId kAutoDump{"auto-dump", "AutoDump",
+                        "Automatically dump training games at end of each go command finishing."};
 
 MoveList StringsToMovelist(const std::vector<std::string>& moves,
                            const ChessBoard& board) {
@@ -93,6 +95,7 @@ void EngineController::PopulateOptions(OptionsParser* options) {
   NetworkFactory::PopulateOptions(options);
   options->Add<IntOption>(kThreadsOptionId, 1, 128) = kDefaultThreads;
   options->Add<IntOption>(kNNCacheSizeId, 0, 999999999) = 200000;
+  options->Add<IntOption>(kAutoDump, 0, 1000000000) = 0;
   SearchParams::Populate(options);
 
   options->Add<StringOption>(kSyzygyTablebaseId);
@@ -229,6 +232,22 @@ class PonderResponseTransformer : public TransformingUciResponder {
   std::string ponder_move_;
 };
 
+class AutoDumpTransformer : public TransformingUciResponder {
+ public:
+  AutoDumpTransformer(std::unique_ptr<UciResponder> parent,
+                            EngineController* controller,
+      int dump_level)
+      : TransformingUciResponder(std::move(parent)),
+        controller_(controller), dump_level_(dump_level) {}
+
+  void TransformBestMove(BestMoveInfo* info) override { 
+      controller_->Dump(dump_level_);
+  }
+
+ private:
+  EngineController *controller_;
+  int dump_level_;
+};
 }  // namespace
 
 void EngineController::Go(const GoParams& params) {
@@ -275,6 +294,10 @@ void EngineController::Go(const GoParams& params) {
     responder = std::make_unique<MovesLeftResponseFilter>(std::move(responder));
   }
 
+  if (options_.Get<int>(kAutoDump) > 0) {
+    responder = std::make_unique<AutoDumpTransformer>(std::move(responder), this, options_.Get<int>(kAutoDump));
+  }
+
   auto stopper = time_manager_->GetStopper(params, *tree_.get());
   search_ = std::make_unique<Search>(
       *tree_, network_.get(), std::move(responder),
@@ -302,7 +325,7 @@ void EngineController::Dump(int limit) {
   Node* root = tree_->GetCurrentHead();
     std::vector<Node*> path;
   path.push_back(root);
-    int written = 0;
+  static int written = 0;
   Dump(limit, &path, &written);
 }
 
