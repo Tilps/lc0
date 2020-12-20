@@ -344,4 +344,11 @@ uint16_t Move::as_nn_index(int transform) const {
   return transformed.as_nn_index(0);
 }
 
+Move Move::as_transformed(int transform) const {
+  Move transformed = *this;
+  transformed.SetTo(Transform(to(), transform));
+  transformed.SetFrom(Transform(from(), transform));
+  return transformed;
+}
+
 }  // namespace lczero

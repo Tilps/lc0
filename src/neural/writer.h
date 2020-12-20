@@ -66,6 +66,43 @@ struct V5TrainingData {
 } PACKED_STRUCT;
 static_assert(sizeof(V5TrainingData) == 8308, "Wrong struct size");
 
+struct V1ReverseTrainingData {
+  uint32_t version;
+  uint32_t input_format;
+  // No history.
+  uint64_t planes[12];
+  uint8_t castling_us_ooo;
+  uint8_t castling_us_oo;
+  uint8_t castling_them_ooo;
+  uint8_t castling_them_oo;
+  uint8_t enpassant;
+  uint8_t invariance_info;
+  uint8_t rule50_count;
+  uint8_t castling_us_ooo_pop;
+  uint8_t castling_us_oo_pop;
+  uint8_t castling_them_ooo_pop;
+  uint8_t castling_them_oo_pop;
+  uint8_t enpassant_pop;
+  uint8_t rule50_pop;
+  // square index the piece was on before moving.
+  uint8_t piece_from;
+  // move type encoding.
+  // 8 * 6(knight move with capture options)
+  // 8 * 6(Slide move with capture options)
+  // 2(enpassant capture)
+  // 8(castling with rook file location)
+  // 1(promotion)
+  // 2 * 5(promotion with capture)
+  uint8_t move_type;
+  uint8_t rule50_targ;
+  uint32_t move_num;
+  uint8_t castling_us_ooo_targ;
+  uint8_t castling_us_oo_targ;
+  uint8_t castling_them_ooo_targ;
+  uint8_t castling_them_oo_targ;
+  uint8_t enpassant_targ;
+} PACKED_STRUCT
+;
 InputPlanes PlanesFromTrainingData(const V5TrainingData& data);
 
 #pragma pack(pop)
@@ -83,6 +120,31 @@ class TrainingDataWriter {
 
   // Writes a chunk.
   void WriteChunk(const V5TrainingData& data);
+
+  // Flushes file and closes it.
+  void Finalize();
+
+  // Gets full filename of the file written.
+  std::string GetFileName() const { return filename_; }
+
+ private:
+  std::string filename_;
+  gzFile fout_;
+};
+
+class TrainingDataWriterReverse {
+ public:
+  // Creates a new file to write in data directory. It will has @game_id
+  // somewhere in the filename.
+  TrainingDataWriterReverse(int game_id);
+  TrainingDataWriterReverse(std::string filename);
+
+  ~TrainingDataWriterReverse() {
+    if (fout_) Finalize();
+  }
+
+  // Writes a chunk.
+  void WriteChunk(const V1ReverseTrainingData& data);
 
   // Flushes file and closes it.
   void Finalize();

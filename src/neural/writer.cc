@@ -241,4 +241,37 @@ void TrainingDataWriter::Finalize() {
   fout_ = nullptr;
 }
 
+TrainingDataWriterReverse::TrainingDataWriterReverse(int game_id) {
+  static std::string directory =
+      GetLc0CacheDirectory() + "data-" + Random::Get().GetString(12);
+  // It's fine if it already exists.
+  CreateDirectory(directory.c_str());
+
+  std::ostringstream oss;
+  oss << directory << '/' << "game_" << std::setfill('0') << std::setw(6)
+      << game_id << ".gz";
+
+  filename_ = oss.str();
+  fout_ = gzopen(filename_.c_str(), "wb");
+  if (!fout_) throw Exception("Cannot create gzip file " + filename_);
+}
+
+TrainingDataWriterReverse::TrainingDataWriterReverse(std::string filename)
+    : filename_(filename) {
+  fout_ = gzopen(filename_.c_str(), "wb");
+  if (!fout_) throw Exception("Cannot create gzip file " + filename_);
+}
+
+void TrainingDataWriterReverse::WriteChunk(const V1ReverseTrainingData& data) {
+  auto bytes_written =
+      gzwrite(fout_, reinterpret_cast<const char*>(&data), sizeof(data));
+  if (bytes_written != sizeof(data)) {
+    throw Exception("Unable to write into " + filename_);
+  }
+}
+
+void TrainingDataWriterReverse::Finalize() {
+  gzclose(fout_);
+  fout_ = nullptr;
+}
 }  // namespace lczero

@@ -222,7 +222,15 @@ void Validate(const std::vector<V5TrainingData>& fileContents) {
       }
     }
     if (sum < 0.99f || sum > 1.01f) {
-      throw Exception("Probability sum error is huge!");
+      std::cerr << "Prob error: " << sum << ": ";
+      for (int j = 0; j < sizeof(data.probabilities) / sizeof(float); j++) {
+        float prob = data.probabilities[j];
+        if (prob >= 0.0f) {
+          std::cerr << prob << " ";
+        }
+      }
+      std::cerr << std::endl;
+      //throw Exception("Probability sum error is huge!");
     }
   }
 }
@@ -411,6 +419,107 @@ void ChangeInputFormat(int newInputFormat, V5TrainingData* data,
   if (marked) {
     data->invariance_info |= 64;
   }
+}
+
+uint8_t CalcMoveType(const PositionHistory& history, Move m,
+                     pblczero::NetworkFormat::InputFormat input_format) {
+  int transform = TransformForPosition(input_format, history);
+  const auto& last_pos = history.GetPositionAt(history.GetLength() - 2);
+  auto pos_cap_mask = m.to().as_board();
+  auto last_board = last_pos.GetThemBoard();
+  int cap_type = 0;
+  if (last_board.queens().intersects(pos_cap_mask)) {
+    cap_type = 1;
+  } else if (last_board.rooks().intersects(pos_cap_mask)) {
+    cap_type = 2;
+  } else if (last_board.bishops().intersects(pos_cap_mask)) {
+    cap_type = 3;
+  } else if (last_board.knights().intersects(pos_cap_mask)) {
+    cap_type = 4;
+  } else if (last_board.pawns().intersects(pos_cap_mask)) {
+    cap_type = 5;
+  }
+  // move type encoding.
+  // 8 * 6(knight move with capture options)
+  // 8 * 6(Slide move with capture options)
+  // 2(enpassant capture)
+  // 8(castling with rook file location)
+  // 1(promotion)
+  // 2 * 5(promotion with capture)
+  int x_delta = m.from().col() - m.to().col();
+  int y_delta = m.from().row() - m.to().row();
+  Move mt = m.as_transformed(transform);
+  int xt_delta = mt.from().col() - mt.to().col();
+  int yt_delta = mt.from().row() - mt.to().row();
+  // Knight move
+  if (std::abs(x_delta * y_delta) == 2) {
+    int knight_direction = -1;
+    if (xt_delta == 2 && yt_delta == 1) {
+      knight_direction = 0;
+    } else if (xt_delta == 1 && yt_delta == 2) {
+      knight_direction = 1;
+    } else if (xt_delta == -2 && yt_delta == 1) {
+      knight_direction = 2;
+    } else if (xt_delta == -1 && yt_delta == 2) {
+      knight_direction = 3;
+    } else if (xt_delta == 2 && yt_delta == -1) {
+      knight_direction = 4;
+    } else if (xt_delta == 1 && yt_delta == -2) {
+      knight_direction = 5;
+    } else if (xt_delta == -2 && yt_delta == -1) {
+      knight_direction = 6;
+    } else if (xt_delta == -1 && yt_delta == -2) {
+      knight_direction = 7;
+    }
+    return knight_direction * 6 + cap_type;
+  }
+  // Handle special case slides first before general.
+  // Promotion.
+  if (m.promotion() != Move::Promotion::None) {
+    if (x_delta == 0) {
+      return 106;
+    }
+    if (xt_delta < 0) {
+      return 107 + cap_type;
+    } else {
+      return 112 + cap_type;
+    }
+  }
+  // Castling.
+  // Must be a king move that 'captures' own rook.
+  if (last_board.kings().intersects(m.from().as_board()) &&
+      (last_board.rooks() & last_board.theirs()).intersects(pos_cap_mask)) {
+    return 98 + mt.to().col();
+  }
+  // enpassant_capture.
+  if (cap_type == 0 &&
+      history.Last().GetBoard().pawns().intersects(pos_cap_mask) &&
+      std::abs(x_delta) == 1) {
+    if (xt_delta < 0) {
+      return 96;
+    } else {
+      return 97;
+    }
+  }
+  int slide_direction = -1;
+  if (xt_delta > 0 && yt_delta == 0) {
+    slide_direction = 0;
+  } else if (xt_delta > 0 && yt_delta > 0) {
+    slide_direction = 1;
+  } else if (xt_delta == 0 && yt_delta > 0) {
+    slide_direction = 2;
+  } else if (xt_delta < 0 && yt_delta > 0) {
+    slide_direction = 3;
+  } else if (xt_delta < 0 && yt_delta == 0) {
+    slide_direction = 4;
+  } else if (xt_delta < 0 && yt_delta < 0) {
+    slide_direction = 5;
+  } else if (xt_delta == 0 && yt_delta < 0) {
+    slide_direction = 6;
+  } else if (xt_delta > 0 && yt_delta < 0) {
+    slide_direction = 7;
+  }
+  return slide_direction * 6 + cap_type + 48;
 }
 
 void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
@@ -968,23 +1077,82 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
           history.Append(moves[i]);
           ChangeInputFormat(newInputFormat, &fileContents[i + 1], history);
         }
+        input_format = static_cast<pblczero::NetworkFormat::InputFormat>(newInputFormat);
       }
 
       std::string fileName = file.substr(file.find_last_of("/\\") + 1);
-      TrainingDataWriter writer(outputDir + "/" + fileName);
-      for (auto chunk : fileContents) {
-        // Don't save chunks that just provide move history.
-        if ((chunk.invariance_info & 64) == 0) {
-          writer.WriteChunk(chunk);
+      TrainingDataWriterReverse writer(outputDir + "/" + fileName);
+
+      PopulateBoard(input_format, PlanesFromTrainingData(fileContents[0]),
+                    &board, &rule50ply, &gameply);
+      history.Reset(board, rule50ply, gameply);
+      for (int i = 0; i < moves.size(); i++) {
+        history.Append(moves[i]);
+        V1ReverseTrainingData chunk;
+        chunk.version = 1;
+        chunk.input_format = 1;
+        for (int i = 0; i < 12; i++) {
+          chunk.planes[i] = fileContents[i + 1].planes[i];
         }
+        chunk.invariance_info = fileContents[i + 1].invariance_info;
+        chunk.enpassant = fileContents[i + 1].side_to_move_or_enpassant;
+        chunk.enpassant_pop = 1;
+        chunk.enpassant_targ = fileContents[i + 1].side_to_move_or_enpassant;
+        chunk.castling_them_ooo = fileContents[i + 1].castling_them_ooo;
+        chunk.castling_them_ooo_pop = 1;
+        chunk.castling_them_ooo_targ = fileContents[i + 1].castling_them_ooo;
+        chunk.castling_us_ooo = fileContents[i + 1].castling_us_ooo;
+        chunk.castling_us_ooo_pop = 1;
+        chunk.castling_us_ooo_targ = fileContents[i + 1].castling_us_ooo;
+        chunk.castling_them_oo = fileContents[i + 1].castling_them_oo;
+        chunk.castling_them_oo_pop = 1;
+        chunk.castling_them_oo_targ = fileContents[i + 1].castling_them_oo;
+        chunk.castling_us_oo = fileContents[i + 1].castling_us_oo;
+        chunk.castling_us_oo_pop = 1;
+        chunk.castling_us_oo_targ = fileContents[i + 1].castling_us_oo;
+        chunk.rule50_pop = 1;
+        chunk.rule50_count = fileContents[i + 1].rule50_count;
+        chunk.rule50_targ = fileContents[i + 1].rule50_count;
+        chunk.move_num = i + 1;
+        Move mirrored = moves[i];
+        mirrored.Mirror();
+        chunk.piece_from =
+            mirrored
+                .as_transformed(TransformForPosition(input_format, history))
+                .from()
+                .as_int();
+        chunk.move_type = CalcMoveType(history, mirrored, input_format);
+        /*
+        if (chunk.move_type > 96) {
+            std::cerr << "Policy: " << static_cast<uint32_t>(chunk.piece_from) << " " << static_cast<uint32_t>(chunk.move_type)
+                      << " for move " << mirrored.as_string() << " under transform "
+                      << TransformForPosition(input_format, history)  << std::endl;
+            std::cerr << "Board: " << std::endl << history.Last().GetBoard().DebugString()
+                      << std::endl;
+        }
+        */
+        writer.WriteChunk(chunk);
+        // TODO: randomly choose which ones to depop - maybe based on whether the position is actually ambiguous.
+        chunk.rule50_count = 0;
+        chunk.rule50_pop = 0;
+        chunk.enpassant = 0;
+        chunk.enpassant_pop = 0;
+        chunk.castling_them_ooo = 0;
+        chunk.castling_them_ooo_pop = 0;
+        chunk.castling_them_oo = 0;
+        chunk.castling_them_oo_pop = 0;
+        chunk.castling_us_ooo = 0;
+        chunk.castling_us_ooo_pop = 0;
+        chunk.castling_us_oo = 0;
+        chunk.castling_us_oo_pop = 0;
+        writer.WriteChunk(chunk);
       }
     } catch (Exception& ex) {
       std::cerr << "While processing: " << file
                 << " - Exception thrown: " << ex.what() << std::endl;
-      std::cerr << "It will be deleted." << std::endl;
+      std::cerr << "It will be ignored." << std::endl;
     }
   }
-  remove(file.c_str());
 }
 
 void ProcessFiles(const std::vector<std::string>& files,

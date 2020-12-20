@@ -258,6 +258,8 @@ class Move {
   // the move before converting it to an index.
   uint16_t as_nn_index(int transform) const;
 
+  Move as_transformed(int transform) const;
+
   explicit operator bool() const { return data_ != 0; }
   bool operator==(const Move& other) const { return data_ == other.data_; }
 
