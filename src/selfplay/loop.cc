@@ -1091,8 +1091,8 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
         V1ReverseTrainingData chunk;
         chunk.version = 1;
         chunk.input_format = 1;
-        for (int i = 0; i < 12; i++) {
-          chunk.planes[i] = fileContents[i + 1].planes[i];
+        for (int j = 0; j < 12; j++) {
+          chunk.planes[j] = fileContents[i + 1].planes[j];
         }
         chunk.invariance_info = fileContents[i + 1].invariance_info;
         chunk.enpassant = fileContents[i + 1].side_to_move_or_enpassant;
