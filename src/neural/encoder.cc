@@ -344,7 +344,7 @@ int TransformForPosition(pblczero::NetworkFormat::InputFormat input_format,
 InputPlanes EncodePositionForNN(
     pblczero::NetworkFormat::InputFormat input_format,
     const PositionHistory& history, int history_planes,
-    FillEmptyHistory fill_empty_history, int* transform_out) {
+    FillEmptyHistory fill_empty_history, bool force_no_transform, int* transform_out) {
   InputPlanes result(kAuxPlaneBase + 8);
 
   int transform = 0;
@@ -358,7 +358,7 @@ InputPlanes EncodePositionForNN(
   {
     const ChessBoard& board = history.Last().GetBoard();
     const bool we_are_black = board.flipped();
-    if (IsCanonicalFormat(input_format)) {
+    if (IsCanonicalFormat(input_format) && !force_no_transform) {
       transform = ChooseTransform(board);
     }
     switch (input_format) {

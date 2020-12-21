@@ -1414,7 +1414,7 @@ bool SearchWorker::AddNodeToComputation(Node* node, bool add_if_cached,
   int transform;
   auto planes =
       EncodePositionForNN(search_->network_->GetCapabilities().input_format,
-                          history_, 8, params_.GetHistoryFill(), &transform);
+                          history_, 8, params_.GetHistoryFill(), false, &transform);
 
   std::vector<uint16_t> moves;
 

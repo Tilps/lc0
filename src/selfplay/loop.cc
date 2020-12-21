@@ -361,8 +361,9 @@ void ChangeInputFormat(int newInputFormat, V5TrainingData* data,
 
   // Populate planes.
   int transform;
+  // Force disable transform since we're actually changing input format to be 'reverse type 1'.
   InputPlanes planes = EncodePositionForNN(input_format, history, 8,
-                                           FillEmptyHistory::NO, &transform);
+                                           FillEmptyHistory::NO, true, &transform);
   int plane_idx = 0;
   for (auto& plane : data->planes) {
     plane = ReverseBitsInBytes(planes[plane_idx++].mask);
@@ -421,9 +422,7 @@ void ChangeInputFormat(int newInputFormat, V5TrainingData* data,
   }
 }
 
-uint8_t CalcMoveType(const PositionHistory& history, Move m,
-                     pblczero::NetworkFormat::InputFormat input_format) {
-  int transform = TransformForPosition(input_format, history);
+uint8_t CalcMoveType(const PositionHistory& history, Move m) {
   const auto& last_pos = history.GetPositionAt(history.GetLength() - 2);
   auto pos_cap_mask = m.to().as_board();
   auto last_board = last_pos.GetThemBoard();
@@ -448,27 +447,24 @@ uint8_t CalcMoveType(const PositionHistory& history, Move m,
   // 2 * 5(promotion with capture)
   int x_delta = m.from().col() - m.to().col();
   int y_delta = m.from().row() - m.to().row();
-  Move mt = m.as_transformed(transform);
-  int xt_delta = mt.from().col() - mt.to().col();
-  int yt_delta = mt.from().row() - mt.to().row();
   // Knight move
   if (std::abs(x_delta * y_delta) == 2) {
     int knight_direction = -1;
-    if (xt_delta == 2 && yt_delta == 1) {
+    if (x_delta == 2 && y_delta == 1) {
       knight_direction = 0;
-    } else if (xt_delta == 1 && yt_delta == 2) {
+    } else if (x_delta == 1 && y_delta == 2) {
       knight_direction = 1;
-    } else if (xt_delta == -2 && yt_delta == 1) {
+    } else if (x_delta == -2 && y_delta == 1) {
       knight_direction = 2;
-    } else if (xt_delta == -1 && yt_delta == 2) {
+    } else if (x_delta == -1 && y_delta == 2) {
       knight_direction = 3;
-    } else if (xt_delta == 2 && yt_delta == -1) {
+    } else if (x_delta == 2 && y_delta == -1) {
       knight_direction = 4;
-    } else if (xt_delta == 1 && yt_delta == -2) {
+    } else if (x_delta == 1 && y_delta == -2) {
       knight_direction = 5;
-    } else if (xt_delta == -2 && yt_delta == -1) {
+    } else if (x_delta == -2 && y_delta == -1) {
       knight_direction = 6;
-    } else if (xt_delta == -1 && yt_delta == -2) {
+    } else if (x_delta == -1 && y_delta == -2) {
       knight_direction = 7;
     }
     return knight_direction * 6 + cap_type;
@@ -479,7 +475,7 @@ uint8_t CalcMoveType(const PositionHistory& history, Move m,
     if (x_delta == 0) {
       return 106;
     }
-    if (xt_delta < 0) {
+    if (x_delta < 0) {
       return 107 + cap_type;
     } else {
       return 112 + cap_type;
@@ -489,34 +485,34 @@ uint8_t CalcMoveType(const PositionHistory& history, Move m,
   // Must be a king move that 'captures' own rook.
   if (last_board.kings().intersects(m.from().as_board()) &&
       (last_board.rooks() & last_board.theirs()).intersects(pos_cap_mask)) {
-    return 98 + mt.to().col();
+    return 98 + m.to().col();
   }
   // enpassant_capture.
   if (cap_type == 0 &&
       history.Last().GetBoard().pawns().intersects(pos_cap_mask) &&
       std::abs(x_delta) == 1) {
-    if (xt_delta < 0) {
+    if (x_delta < 0) {
       return 96;
     } else {
       return 97;
     }
   }
   int slide_direction = -1;
-  if (xt_delta > 0 && yt_delta == 0) {
+  if (x_delta > 0 && y_delta == 0) {
     slide_direction = 0;
-  } else if (xt_delta > 0 && yt_delta > 0) {
+  } else if (x_delta > 0 && y_delta > 0) {
     slide_direction = 1;
-  } else if (xt_delta == 0 && yt_delta > 0) {
+  } else if (x_delta == 0 && y_delta > 0) {
     slide_direction = 2;
-  } else if (xt_delta < 0 && yt_delta > 0) {
+  } else if (x_delta < 0 && y_delta > 0) {
     slide_direction = 3;
-  } else if (xt_delta < 0 && yt_delta == 0) {
+  } else if (x_delta < 0 && y_delta == 0) {
     slide_direction = 4;
-  } else if (xt_delta < 0 && yt_delta < 0) {
+  } else if (x_delta < 0 && y_delta < 0) {
     slide_direction = 5;
-  } else if (xt_delta == 0 && yt_delta < 0) {
+  } else if (x_delta == 0 && y_delta < 0) {
     slide_direction = 6;
-  } else if (xt_delta > 0 && yt_delta < 0) {
+  } else if (x_delta > 0 && y_delta < 0) {
     slide_direction = 7;
   }
   return slide_direction * 6 + cap_type + 48;
@@ -1068,17 +1064,17 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
           history.Pop();
         }
       }
-      if (newInputFormat != -1) {
+      // Force 4, since its the only one that maps over to reverse training data 'cleanly'.
+      newInputFormat = 4;
         PopulateBoard(input_format, PlanesFromTrainingData(fileContents[0]),
-                      &board, &rule50ply, &gameply);
+                        &board, &rule50ply, &gameply);
         history.Reset(board, rule50ply, gameply);
         ChangeInputFormat(newInputFormat, &fileContents[0], history);
         for (int i = 0; i < moves.size(); i++) {
-          history.Append(moves[i]);
-          ChangeInputFormat(newInputFormat, &fileContents[i + 1], history);
+            history.Append(moves[i]);
+            ChangeInputFormat(newInputFormat, &fileContents[i + 1], history);
         }
         input_format = static_cast<pblczero::NetworkFormat::InputFormat>(newInputFormat);
-      }
 
       std::string fileName = file.substr(file.find_last_of("/\\") + 1);
       TrainingDataWriterReverse writer(outputDir + "/" + fileName);
@@ -1118,10 +1114,9 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
         mirrored.Mirror();
         chunk.piece_from =
             mirrored
-                .as_transformed(TransformForPosition(input_format, history))
                 .from()
                 .as_int();
-        chunk.move_type = CalcMoveType(history, mirrored, input_format);
+        chunk.move_type = CalcMoveType(history, mirrored);
         /*
         if (chunk.move_type > 96) {
             std::cerr << "Policy: " << static_cast<uint32_t>(chunk.piece_from) << " " << static_cast<uint32_t>(chunk.move_type)

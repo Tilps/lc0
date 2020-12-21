@@ -484,7 +484,7 @@ V5TrainingData Node::GetV5TrainingData(
   // Populate planes.
   int transform;
   InputPlanes planes = EncodePositionForNN(input_format, history, 8,
-                                           fill_empty_history, &transform);
+                                           fill_empty_history, false, &transform);
   int plane_idx = 0;
   for (auto& plane : result.planes) {
     plane = ReverseBitsInBytes(planes[plane_idx++].mask);
