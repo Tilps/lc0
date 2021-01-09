@@ -933,8 +933,13 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
               activeZ = SelectNewZ(Random::Get().GetFloat(1.0), last.best_q, last.best_d);
               deblunderingStarted = true;
             }
-            if (last.best_q - last.played_q >
-                deblunderQPlayedMoveBlunderThreshold) {
+            // A blunder is defined by the played move being worse than the
+            // best move by a defined threshold, missing a forced win, or
+            // playing into a proven loss without being forced.
+            if ((last.best_q - last.played_q >
+                deblunderQPlayedMoveBlunderThreshold) ||
+                (last.best_q > -1 && last.played_q < 1 &&
+                 (last.best_q == 1 || last.played_q == -1))) {
               activeZ_qd = { last.best_q, last.best_d };
               deblunderingWDLStarted = true;
             }
@@ -958,8 +963,13 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                 deblunderingStarted = true;
               }
             }
-            if (cur.best_q - cur.played_q >
-                deblunderQPlayedMoveBlunderThreshold) {
+            // A blunder is defined by the played move being worse than the
+            // best move by a defined threshold, missing a forced win, or
+            // playing into a proven loss without being forced.
+            if ((cur.best_q - cur.played_q >
+                deblunderQPlayedMoveBlunderThreshold) ||
+                (cur.best_q > -1 && cur.played_q < 1 &&
+                 (cur.best_q == 1 || cur.played_q == -1))) {
               activeZ_qd = { cur.best_q, cur.best_d };
               deblunderingWDLStarted = true;
             }
