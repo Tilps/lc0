@@ -941,6 +941,8 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                 (last.best_q > -1 && last.played_q < 1 &&
                  (last.best_q == 1 || last.played_q == -1))) {
               activeZ_qd = { last.best_q, last.best_d };
+              // TODO: Also keep track of activeM and overwrite the training
+              // targets.
               deblunderingWDLStarted = true;
             }
           } else {
