@@ -14,4 +14,4 @@ IF %PGO%==true (
   lc0 benchmark --num-positions=1 --weights=c:\cache\%NET%.pb.gz --backend=random --movetime=10000
 )
 cd ..
-IF %PGO%==true msbuild "C:\projects\lc0\build\lc0.sln" /m /p:WholeProgramOptimization=PGOptimize /p:DebugInformationFormat=ProgramDatabase /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
+IF %PGO%==true msbuild "C:\projects\lc0\build\rescorer.sln" /m /p:WholeProgramOptimization=PGOptimize /p:DebugInformationFormat=ProgramDatabase /logger:"C:\Program Files\AppVeyor\BuildAgent\Appveyor.MSBuildLogger.dll"
