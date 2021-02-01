@@ -932,39 +932,18 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                             fileContents.back().plies_left };
         bool deblunderingStarted = false;
         while (true) {
-          if (history.GetLength() == fileContents.size()) {
-            // Game doesn't get to TB, so we need to check if final position is
-            // a blunder.
-            auto& last = fileContents.back();
-            // A blunder is defined by the played move being worse than the
-            // best move by a defined threshold, missing a forced win, or
-            // playing into a proven loss without being forced.
-            if ((last.best_q - last.played_q >
-                deblunderQBlunderThreshold) ||
-                (last.best_q > -1 && last.played_q < 1 &&
-                 (last.best_q == 1 || last.played_q == -1))) {
-              activeZ[0] = last.best_q;
-              activeZ[1] = last.best_d;
-              activeZ[2] = last.best_m;
-              // TODO: Also keep track of activeM and overwrite the training
-              // targets.
-              deblunderingStarted = true;
-            }
-          } else {
-            auto played = moves[history.GetLength() - 1];
-            auto& cur = fileContents[history.GetLength() - 1];
-            // A blunder is defined by the played move being worse than the
-            // best move by a defined threshold, missing a forced win, or
-            // playing into a proven loss without being forced.
-            if ((cur.best_q - cur.played_q >
-                deblunderQBlunderThreshold) ||
-                (cur.best_q > -1 && cur.played_q < 1 &&
-                 (cur.best_q == 1 || cur.played_q == -1))) {
-              activeZ[0] = cur.best_q;
-              activeZ[1] = cur.best_d;
-              activeZ[2] = cur.best_m;
-              deblunderingStarted = true;
-            }
+          auto& cur = fileContents[history.GetLength() - 1];
+          // A blunder is defined by the played move being worse than the
+          // best move by a defined threshold, missing a forced win, or
+          // playing into a proven loss without being forced.
+          if ((cur.best_q - cur.played_q >
+              deblunderQBlunderThreshold) ||
+              (cur.best_q > -1 && cur.played_q < 1 &&
+               (cur.best_q == 1 || cur.played_q == -1))) {
+            activeZ[0] = cur.best_q;
+            activeZ[1] = cur.best_d;
+            activeZ[2] = cur.best_m;
+            deblunderingStarted = true;
           }
           if (deblunderingStarted) {
             /*
