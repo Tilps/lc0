@@ -944,6 +944,8 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
             activeZ[1] = cur.best_d;
             activeZ[2] = cur.best_m;
             deblunderingStarted = true;
+            std::cout << "Blunder detected. Best move q=" << cur.best_q <<
+             " played move q=" << cur.played_q;
           }
           if (deblunderingStarted) {
             /*
