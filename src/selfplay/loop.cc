@@ -95,6 +95,7 @@ std::atomic<int> rescored(0);
 std::atomic<int> delta(0);
 std::atomic<int> rescored2(0);
 std::atomic<int> rescored3(0);
+std::atomic<int> blunders(0);
 std::atomic<int> orig_counts[3];
 std::atomic<int> fixed_counts[3];
 std::atomic<int> policy_bump(0);
@@ -912,6 +913,8 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
           }
         }
       }
+      // Deblunder only works from v6 data onwards. We therefore check
+      // the visits field which is 0 if we're dealing with upgraded data.
       if (deblunderEnabled && fileContents.back().visits > 0) {
         PopulateBoard(input_format, PlanesFromTrainingData(fileContents[0]),
                       &board, &rule50ply, &gameply);
@@ -944,8 +947,9 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
             activeZ[1] = cur.best_d;
             activeZ[2] = cur.best_m;
             deblunderingStarted = true;
-            std::cout << "Blunder detected. Best move q=" << cur.best_q <<
-             " played move q=" << cur.played_q;
+            blunders += 1;
+            /* std::cout << "Blunder detected. Best move q=" << cur.best_q <<
+             " played move q=" << cur.played_q; */
           }
           if (deblunderingStarted) {
             /*
@@ -1193,6 +1197,8 @@ void RescoreLoop::RunLoop() {
   std::cout << "Cumulative outcome change: " << delta << std::endl;
   std::cout << "Secondary rescores performed: " << rescored2 << std::endl;
   std::cout << "Secondary rescores performed used dtz: " << rescored3
+            << std::endl;
+  std::cout << "Blunders picked up by deblunder threshold: " << blunders
             << std::endl;
   std::cout << "Number of policy values boosted by dtz or dtm " << policy_bump
             << std::endl;
