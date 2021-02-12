@@ -72,7 +72,7 @@ class SelfPlayGame {
   // (useful for training games). Otherwise the tree is separate for black
   // and white (useful i.e. when they use different networks).
   SelfPlayGame(PlayerOptions white, PlayerOptions black, bool shared_tree,
-               const Opening& opening);
+               const Opening& opening, bool black_is_player1);
 
   // Populate command line options that it uses.
   static void PopulateUciParams(OptionsParser* options);
@@ -122,6 +122,7 @@ class SelfPlayGame {
   std::vector<V6TrainingData> training_data_;
 
   std::unique_ptr<SyzygyTablebase> syzygy_tb_;
+  bool black_is_player1_;
 
 };
 

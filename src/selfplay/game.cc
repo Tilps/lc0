@@ -76,10 +76,11 @@ void SelfPlayGame::PopulateUciParams(OptionsParser* options) {
 }
 
 SelfPlayGame::SelfPlayGame(PlayerOptions white, PlayerOptions black,
-                           bool shared_tree, const Opening& opening)
+                           bool shared_tree, const Opening& opening, bool black_is_player1)
     : options_{white, black},
       chess960_{white.uci_options->Get<bool>(kUciChess960) ||
-                black.uci_options->Get<bool>(kUciChess960)} {
+                black.uci_options->Get<bool>(kUciChess960)},
+      black_is_player1_{black_is_player1} {
   orig_fen_ = opening.start_fen;
   tree_[0] = std::make_shared<NodeTree>();
   tree_[0]->ResetToPosition(orig_fen_, {});
@@ -276,6 +277,8 @@ void SelfPlayGame::Play(int white_threads, int black_threads, bool training,
           GameResult::UNDECIDED, tree_[idx]->GetPositionHistory(),
           search_->GetParams().GetHistoryFill(), input_format, best_eval,
           played_eval, orig_eval, best_is_proof, best_move, move));
+      // store 0 if current player is player1, otherwise 1 for player2.
+      training_data_.back().dummy = (black_is_player1_ == blacks_move) ? 0 : 1;
     }
     // Must reset the search before mutating the tree.
     search_.reset();
