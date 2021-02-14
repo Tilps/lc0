@@ -130,6 +130,10 @@ class SearchParams {
   int GetIdlingMinimumWork() const { return kIdlingMinimumWork; }
   int GetThreadIdlingThreshold() const { return kThreadIdlingThreshold; }
 
+  const std::vector<float>& GetWLDTransformMatrix() const {
+    return kWLDTransformMatrix;
+  }
+
   // Search parameter IDs.
   static const OptionId kMiniBatchSizeId;
   static const OptionId kMaxPrefetchBatchId;
@@ -189,6 +193,7 @@ class SearchParams {
   static const OptionId kMinimumWorkPerTaskForProcessingId;
   static const OptionId kIdlingMinimumWorkId;
   static const OptionId kThreadIdlingThresholdId;
+  static const OptionId kContemptId;
 
  private:
   const OptionsDict& options_;
@@ -242,6 +247,7 @@ class SearchParams {
   const int kMinimumWorkPerTaskForProcessing;
   const int kIdlingMinimumWork;
   const int kThreadIdlingThreshold;
+  std::vector<float> kWLDTransformMatrix;
 };
 
 }  // namespace lczero
