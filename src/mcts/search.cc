@@ -1139,11 +1139,40 @@ void SearchWorker::InitializeIteration(
   minibatch_.reserve(2 * params_.GetMiniBatchSize());
 }
 
+namespace {
+int Mix(int high, int low, float ratio) {
+  return static_cast<int>(std::round(high * ratio + low * (1.0f - ratio)));
+}
+int CalculateCollisionsLeft(int64_t nodes, const SearchParams& params) {
+  // End checked first
+  if (nodes >= params.GetMaxCollisionVisitsScalingEnd()) {
+    return params.GetMaxCollisionVisitsId();
+  }
+  if (nodes <= params.GetMaxCollisionVisitsScalingStart()) {
+    return 1;
+  }
+  return Mix(params.GetMaxCollisionVisitsId(), 1,
+             std::pow((static_cast<float>(nodes) -
+                       params.GetMaxCollisionVisitsScalingStart()) /
+                          (params.GetMaxCollisionVisitsScalingEnd() -
+                           params.GetMaxCollisionVisitsScalingStart()),
+                      params.GetMaxCollisionVisitsScalingPower()));
+}
+}  // namespace
+
 void SearchWorker::GatherMinibatch2() {
   // Total number of nodes to process.
   int minibatch_size = 0;
-  int collision_events_left = params_.GetMaxCollisionEvents();
-  int collisions_left = params_.GetMaxCollisionVisitsId();
+  int cur_n = 0;
+  {
+    SharedMutex::Lock lock(search_->nodes_mutex_);
+    cur_n = search_->root_node_->GetN();
+  }
+  // TODO: GetEstimatedRemainingPlayouts has already had smart pruning factor
+  // applied, which doesn't clearly make sense to include here...
+  int64_t remaining_n = latest_time_manager_hints_.GetEstimatedRemainingPlayouts();
+  int collisions_left = CalculateCollisionsLeft(
+      std::min(static_cast<int64_t>(cur_n), remaining_n), params_);
 
   // Number of nodes processed out of order.
   number_out_of_order_ = 0;
@@ -1175,8 +1204,7 @@ void SearchWorker::GatherMinibatch2() {
     int new_start = static_cast<int>(minibatch_.size());
 
     PickNodesToExtend(
-        std::min({collision_events_left, collisions_left,
-                  params_.GetMiniBatchSize() - minibatch_size,
+        std::min({collisions_left, params_.GetMiniBatchSize() - minibatch_size,
                   params_.GetMaxOutOfOrderEvals() - number_out_of_order_}));
 
     // Count the non-collisions.
@@ -1290,7 +1318,6 @@ void SearchWorker::GatherMinibatch2() {
             node->IncrementNInFlight(extra);
           }
         }
-        if (--collision_events_left <= 0) return;
         if ((collisions_left -= picked_node.multivisit) <= 0) return;
         if (search_->stop_.load(std::memory_order_acquire)) return;
       }
