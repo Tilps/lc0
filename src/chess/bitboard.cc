@@ -344,4 +344,8 @@ uint16_t Move::as_nn_index(int transform) const {
   return transformed.as_nn_index(0);
 }
 
+Move MoveFromNNIndex(int idx) {
+  return kIdxToMove[idx];
+}
+
 }  // namespace lczero

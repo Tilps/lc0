@@ -297,4 +297,6 @@ class Move {
 
 using MoveList = std::vector<Move>;
 
+Move MoveFromNNIndex(int idx);
+
 }  // namespace lczero

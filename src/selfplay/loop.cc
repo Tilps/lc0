@@ -28,6 +28,7 @@
 #include "selfplay/loop.h"
 
 #include <optional>
+#include <sstream>
 
 #include "gtb-probe.h"
 #include "neural/encoder.h"
@@ -74,6 +75,8 @@ const OptionId kDeblunder{
 const OptionId kDeblunderQBlunderThreshold{
     "deblunder-q-blunder-threshold", "",
     "The amount Q of played move needs to be worse than best move in order to assume the played move is a blunder."};
+const OptionId kNnuePlainFileId{"nnue-plain-file", "",
+    "Append SF plain format training data to this file. Will be generated if not there."};
 
 const OptionId kLogFileId{"logfile", "LogFile",
                           "Write log to that file. Special value <stderr> to "
@@ -416,9 +419,30 @@ int ResultForData(const V6TrainingData& data) {
   return static_cast<int>(data.result_q);
 }
 
+std::string AsNnueString(const Position& p, Move m, float q, int result) {
+  std::ostringstream out;
+  out << "fen " << GetFen(p) << std::endl;
+  m = p.GetBoard().GetLegacyMove(m);
+  if (m.from().row() == ChessBoard::Rank::RANK_7 &&
+      p.GetBoard().pawns().get(m.from()) &&
+      m.promotion() == Move::Promotion::None) {
+    m.SetPromotion(Move::Promotion::Knight);
+  }
+  if (p.IsBlackToMove()) m.Mirror();
+  out << "move " << m.as_string() << std::endl;
+  // Formula from PR1477 adjuster for SF PawnValueEg.
+  out << "score " << round(660.6 * q / (1 - 0.9751875 * std::pow(q, 10)))
+      << std::endl;
+  out << "ply " << p.GetGamePly() << std::endl;
+  out << "result " << result << std::endl;
+  out << "e" << std::endl;
+  return out.str();
+}
+
 void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                  std::string outputDir, float distTemp, float distOffset,
-                 float dtzBoost, int newInputFormat) {
+                 float dtzBoost, int newInputFormat,
+                 std::string nnue_plain_file) {
   // Scope to ensure reader and writer are closed before deleting source file.
   {
     try {
@@ -983,12 +1007,51 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
         }
       }
 
-      std::string fileName = file.substr(file.find_last_of("/\\") + 1);
-      TrainingDataWriter writer(outputDir + "/" + fileName);
-      for (auto chunk : fileContents) {
-        // Don't save chunks that just provide move history.
-        if ((chunk.invariance_info & 64) == 0) {
-          writer.WriteChunk(chunk);
+      if (!outputDir.empty()) {
+        std::string fileName = file.substr(file.find_last_of("/\\") + 1);
+        TrainingDataWriter writer(outputDir + "/" + fileName);
+        for (auto chunk : fileContents) {
+          // Don't save chunks that just provide move history.
+          if ((chunk.invariance_info & 64) == 0) {
+            writer.WriteChunk(chunk);
+          }
+        }
+      }
+
+      // Output data in Stockfish plain format.
+      if (!nnue_plain_file.empty()) {
+        static Mutex mutex;
+        std::ostringstream out;
+        if (newInputFormat != -1) {
+          PopulateBoard(
+              static_cast<pblczero::NetworkFormat::InputFormat>(newInputFormat),
+              PlanesFromTrainingData(fileContents[0]), &board, &rule50ply,
+              &gameply);
+        } else {
+          PopulateBoard(input_format, PlanesFromTrainingData(fileContents[0]),
+                        &board, &rule50ply, &gameply);
+        }
+        history.Reset(board, rule50ply, gameply);
+        for (int i = 0; i < fileContents.size(); i++) {
+          auto chunk = fileContents[i];
+          // Format is v6 and position evaluated.
+          if (chunk.visits > 0) {
+            Position p = history.GetPositionAt(i);
+            out << AsNnueString(p, MoveFromNNIndex(chunk.best_idx),
+                                chunk.best_q, round(chunk.result_q));
+            if (chunk.played_idx != chunk.best_idx) {
+              out << AsNnueString(p, MoveFromNNIndex(chunk.played_idx),
+                                  chunk.played_q, round(chunk.result_q));
+            }
+          }
+          history.Append(MoveFromNNIndex(chunk.played_idx));
+        }
+        std::ofstream file;
+        Mutex::Lock lock(mutex);
+        file.open(nnue_plain_file, std::ios_base::app);
+        if (file.is_open()) {
+          file << out.str();
+          file.close();
         }
       }
     } catch (Exception& ex) {
@@ -1003,7 +1066,8 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
 void ProcessFiles(const std::vector<std::string>& files,
                   SyzygyTablebase* tablebase, std::string outputDir,
                   float distTemp, float distOffset, float dtzBoost,
-                  int newInputFormat, int offset, int mod) {
+                  int newInputFormat, int offset, int mod,
+                  std::string nnue_plain_file) {
   std::cerr << "Thread: " << offset << " starting" << std::endl;
   for (int i = offset; i < files.size(); i += mod) {
     if (files[i].rfind(".gz") != files[i].size() - 3) {
@@ -1011,7 +1075,7 @@ void ProcessFiles(const std::vector<std::string>& files,
       continue;
     }
     ProcessFile(files[i], tablebase, outputDir, distTemp, distOffset, dtzBoost,
-                newInputFormat);
+                newInputFormat, nnue_plain_file);
   }
 }
 
@@ -1103,10 +1167,18 @@ void RescoreLoop::RunLoop() {
   options_.Add<IntOption>(kNewInputFormatId, -1, 256) = -1;
   options_.Add<BoolOption>(kDeblunder) = false;
   options_.Add<FloatOption>(kDeblunderQBlunderThreshold, 0.0f, 2.0f) = 2.0f;
+  options_.Add<StringOption>(kNnuePlainFileId);
 
   SelfPlayTournament::PopulateOptions(&options_);
 
   if (!options_.ProcessAllFlags()) return;
+
+  if (options_.GetOptionsDict().IsDefault<std::string>(kOutputDirId) &&
+      options_.GetOptionsDict().IsDefault<std::string>(kNnuePlainFileId)) {
+    std::cerr << "Must provide an output dir or NNUE plain file." << std::endl;
+    return;
+  }
+
   deblunderEnabled = options_.GetOptionsDict().Get<bool>(kDeblunder);
   deblunderQBlunderThreshold =
       options_.GetOptionsDict().Get<float>(kDeblunderQBlunderThreshold);
@@ -1176,7 +1248,8 @@ void RescoreLoop::RunLoop() {
             options_.GetOptionsDict().Get<float>(kTempId),
             options_.GetOptionsDict().Get<float>(kDistributionOffsetId),
             dtz_boost, options_.GetOptionsDict().Get<int>(kNewInputFormatId),
-            offset_val, threads);
+            offset_val, threads,
+            options_.GetOptionsDict().Get<std::string>(kNnuePlainFileId));
       });
     }
     for (int i = 0; i < threads_.size(); i++) {
@@ -1189,7 +1262,8 @@ void RescoreLoop::RunLoop() {
                  options_.GetOptionsDict().Get<float>(kTempId),
                  options_.GetOptionsDict().Get<float>(kDistributionOffsetId),
                  dtz_boost,
-                 options_.GetOptionsDict().Get<int>(kNewInputFormatId), 0, 1);
+                 options_.GetOptionsDict().Get<int>(kNewInputFormatId), 0, 1,
+                 options_.GetOptionsDict().Get<std::string>(kNnuePlainFileId));
   }
   std::cout << "Games processed: " << games << std::endl;
   std::cout << "Positions processed: " << positions << std::endl;
