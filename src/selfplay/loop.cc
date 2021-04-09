@@ -1024,29 +1024,33 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
       if (!nnue_plain_file.empty()) {
         static Mutex mutex;
         std::ostringstream out;
+        pblczero::NetworkFormat::InputFormat format;
         if (newInputFormat != -1) {
-          PopulateBoard(
-              static_cast<pblczero::NetworkFormat::InputFormat>(newInputFormat),
-              PlanesFromTrainingData(fileContents[0]), &board, &rule50ply,
-              &gameply);
+          format =
+              static_cast<pblczero::NetworkFormat::InputFormat>(newInputFormat);
         } else {
-          PopulateBoard(input_format, PlanesFromTrainingData(fileContents[0]),
-                        &board, &rule50ply, &gameply);
+          format = input_format;
         }
+        PopulateBoard(format, PlanesFromTrainingData(fileContents[0]), &board,
+                      &rule50ply, &gameply);
         history.Reset(board, rule50ply, gameply);
         for (int i = 0; i < fileContents.size(); i++) {
           auto chunk = fileContents[i];
           // Format is v6 and position evaluated.
           if (chunk.visits > 0) {
-            Position p = history.GetPositionAt(i);
-            out << AsNnueString(p, MoveFromNNIndex(chunk.best_idx),
+            Position p = history.Last();
+            int transform = TransformForPosition(format, history);
+            out << AsNnueString(p, MoveFromNNIndex(chunk.best_idx, transform),
                                 chunk.best_q, round(chunk.result_q));
             if (chunk.played_idx != chunk.best_idx) {
-              out << AsNnueString(p, MoveFromNNIndex(chunk.played_idx),
+              out << AsNnueString(p,
+                                  MoveFromNNIndex(chunk.played_idx, transform),
                                   chunk.played_q, round(chunk.result_q));
             }
           }
-          history.Append(MoveFromNNIndex(chunk.played_idx));
+          if (i < moves.size()) {
+            history.Append(moves[i]);
+          }
         }
         std::ofstream file;
         Mutex::Lock lock(mutex);
