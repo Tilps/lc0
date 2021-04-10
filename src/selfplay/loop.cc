@@ -1049,7 +1049,7 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
             }
           } else if (i < moves.size()) {
             // Use best_q from next chunk - we have one more chumk than moves.
-            out << AsNnueString(p, moves[i], fileContents[i + 1].best_q,
+            out << AsNnueString(p, moves[i], -fileContents[i + 1].best_q,
                                 round(chunk.result_q));
           }
           if (i < moves.size()) {
