@@ -1036,9 +1036,9 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
         history.Reset(board, rule50ply, gameply);
         for (int i = 0; i < fileContents.size(); i++) {
           auto chunk = fileContents[i];
-          // Format is v6 and position evaluated.
+          Position p = history.Last();
           if (chunk.visits > 0) {
-            Position p = history.Last();
+            // Format is v6 and position is evaluated.
             int transform = TransformForPosition(format, history);
             out << AsNnueString(p, MoveFromNNIndex(chunk.best_idx, transform),
                                 chunk.best_q, round(chunk.result_q));
@@ -1047,6 +1047,10 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                                   MoveFromNNIndex(chunk.played_idx, transform),
                                   chunk.played_q, round(chunk.result_q));
             }
+          } else if (i < moves.size()) {
+            // Use best_q from next chunk - we have one more chumk than moves.
+            out << AsNnueString(p, moves[i], fileContents[i + 1].best_q,
+                                round(chunk.result_q));
           }
           if (i < moves.size()) {
             history.Append(moves[i]);
