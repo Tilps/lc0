@@ -74,9 +74,18 @@ const OptionId kDeblunder{
     "if the the selected move appears to be a blunder."};
 const OptionId kDeblunderQBlunderThreshold{
     "deblunder-q-blunder-threshold", "",
-    "The amount Q of played move needs to be worse than best move in order to assume the played move is a blunder."};
+    "The amount Q of played move needs to be worse than best move in order to "
+    "assume the played move is a blunder."};
 const OptionId kNnuePlainFileId{"nnue-plain-file", "",
-    "Append SF plain format training data to this file. Will be generated if not there."};
+                                "Append SF plain format training data to this "
+                                "file. Will be generated if not there."};
+const OptionId kNnueBestScoreId{"nnue-best-score", "",
+                                "For the SF training data use the score of the "
+                                "best move instead of the played one."};
+const OptionId kNnueBestMoveId{
+    "nnue-best-move", "",
+    "For the SF training data record the best move instead of the played one. "
+    "If set to true the generated files do not compress well."};
 const OptionId kDeleteFilesId{"delete-files", "",
                               "Delete the input files after processing."};
 
@@ -441,10 +450,16 @@ std::string AsNnueString(const Position& p, Move m, float q, int result) {
   return out.str();
 }
 
+struct ProcessFileFlags {
+  bool delete_files : 1;
+  bool nnue_best_score : 1;
+  bool nnue_best_move : 1;
+};
+
 void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
                  std::string outputDir, float distTemp, float distOffset,
                  float dtzBoost, int newInputFormat,
-                 std::string nnue_plain_file, bool deleteFiles) {
+                 std::string nnue_plain_file, ProcessFileFlags flags) {
   // Scope to ensure reader and writer are closed before deleting source file.
   {
     try {
@@ -1039,17 +1054,13 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
           Position p = history.Last();
           if (chunk.visits > 0) {
             // Format is v6 and position is evaluated.
-            int transform = TransformForPosition(format, history);
-            out << AsNnueString(p, MoveFromNNIndex(chunk.best_idx, transform),
-                                chunk.best_q, round(chunk.result_q));
-            if (chunk.played_idx != chunk.best_idx) {
-              out << AsNnueString(p,
-                                  MoveFromNNIndex(chunk.played_idx, transform),
-                                  chunk.played_q, round(chunk.result_q));
-            }
+            Move m = MoveFromNNIndex(
+                flags.nnue_best_move ? chunk.best_idx : chunk.played_idx,
+                TransformForPosition(format, history));
+            float q = flags.nnue_best_score ? chunk.best_q : chunk.played_q;
+            out << AsNnueString(p, m, q, round(chunk.result_q));
           } else if (i < moves.size()) {
-            // Use best_q from next chunk - we have one more chumk than moves.
-            out << AsNnueString(p, moves[i], -fileContents[i + 1].best_q,
+            out << AsNnueString(p, moves[i], chunk.best_q,
                                 round(chunk.result_q));
           }
           if (i < moves.size()) {
@@ -1067,12 +1078,12 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
     } catch (Exception& ex) {
       std::cerr << "While processing: " << file
                 << " - Exception thrown: " << ex.what() << std::endl;
-      if (deleteFiles) {
+      if (flags.delete_files) {
         std::cerr << "It will be deleted." << std::endl;
       }
     }
   }
-  if (deleteFiles) {
+  if (flags.delete_files) {
     remove(file.c_str());
   }
 }
@@ -1081,7 +1092,7 @@ void ProcessFiles(const std::vector<std::string>& files,
                   SyzygyTablebase* tablebase, std::string outputDir,
                   float distTemp, float distOffset, float dtzBoost,
                   int newInputFormat, int offset, int mod,
-                  std::string nnue_plain_file, bool deleteFiles) {
+                  std::string nnue_plain_file, ProcessFileFlags flags) {
   std::cerr << "Thread: " << offset << " starting" << std::endl;
   for (int i = offset; i < files.size(); i += mod) {
     if (files[i].rfind(".gz") != files[i].size() - 3) {
@@ -1089,7 +1100,7 @@ void ProcessFiles(const std::vector<std::string>& files,
       continue;
     }
     ProcessFile(files[i], tablebase, outputDir, distTemp, distOffset, dtzBoost,
-                newInputFormat, nnue_plain_file, deleteFiles);
+                newInputFormat, nnue_plain_file, flags);
   }
 }
 
@@ -1182,6 +1193,8 @@ void RescoreLoop::RunLoop() {
   options_.Add<BoolOption>(kDeblunder) = false;
   options_.Add<FloatOption>(kDeblunderQBlunderThreshold, 0.0f, 2.0f) = 2.0f;
   options_.Add<StringOption>(kNnuePlainFileId);
+  options_.Add<BoolOption>(kNnueBestScoreId) = true;
+  options_.Add<BoolOption>(kNnueBestMoveId) = false;
   options_.Add<BoolOption>(kDeleteFilesId) = true;
 
   SelfPlayTournament::PopulateOptions(&options_);
@@ -1249,6 +1262,10 @@ void RescoreLoop::RunLoop() {
   }
   float dtz_boost = options_.GetOptionsDict().Get<float>(kMinDTZBoostId);
   int threads = options_.GetOptionsDict().Get<int>(kThreadsId);
+  ProcessFileFlags flags;
+  flags.delete_files = options_.GetOptionsDict().Get<bool>(kDeleteFilesId);
+  flags.nnue_best_score = options_.GetOptionsDict().Get<bool>(kNnueBestScoreId);
+  flags.nnue_best_move = options_.GetOptionsDict().Get<bool>(kNnueBestScoreId);
   if (threads > 1) {
     std::vector<std::thread> threads_;
     int offset = 0;
@@ -1256,7 +1273,7 @@ void RescoreLoop::RunLoop() {
       int offset_val = offset;
       offset++;
       threads_.emplace_back([this, offset_val, files, &tablebase, threads,
-                             dtz_boost]() {
+                             dtz_boost, flags]() {
         ProcessFiles(
             files, &tablebase,
             options_.GetOptionsDict().Get<std::string>(kOutputDirId),
@@ -1265,7 +1282,7 @@ void RescoreLoop::RunLoop() {
             dtz_boost, options_.GetOptionsDict().Get<int>(kNewInputFormatId),
             offset_val, threads,
             options_.GetOptionsDict().Get<std::string>(kNnuePlainFileId),
-            options_.GetOptionsDict().Get<bool>(kDeleteFilesId));
+            flags);
       });
     }
     for (int i = 0; i < threads_.size(); i++) {
@@ -1280,7 +1297,7 @@ void RescoreLoop::RunLoop() {
                  dtz_boost,
                  options_.GetOptionsDict().Get<int>(kNewInputFormatId), 0, 1,
                  options_.GetOptionsDict().Get<std::string>(kNnuePlainFileId),
-                 options_.GetOptionsDict().Get<bool>(kDeleteFilesId));
+                 flags);
   }
   std::cout << "Games processed: " << games << std::endl;
   std::cout << "Positions processed: " << positions << std::endl;
