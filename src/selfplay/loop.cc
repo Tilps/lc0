@@ -73,7 +73,8 @@ const OptionId kDeblunder{
     "if the the selected move appears to be a blunder."};
 const OptionId kDeblunderQBlunderThreshold{
     "deblunder-q-blunder-threshold", "",
-    "The amount Q of played move needs to be worse than best move in order to assume the played move is a blunder."};
+    "The amount Q of played move needs to be worse than best move in order to "
+    "assume the played move is a blunder."};
 const OptionId kDeblunderQBlunderWidth{
     "deblunder-q-blunder-width", "",
     "Width of the transition between accepted temp moves and blunders."};
@@ -932,27 +933,31 @@ void ProcessFile(const std::string& file, SyzygyTablebase* tablebase,
             break;
           }
         }
-        float activeZ[3] = { fileContents.back().result_q,
+        float activeZ[3] = {fileContents.back().result_q,
                             fileContents.back().result_d,
-                            fileContents.back().plies_left };
+                            fileContents.back().plies_left};
         bool deblunderingStarted = false;
         while (true) {
           auto& cur = fileContents[history.GetLength() - 1];
           // A blunder is defined by the played move being worse than the
           // best move by a defined threshold, missing a forced win, or
           // playing into a proven loss without being forced.
-          bool deblunderTriggerThreshold = (cur.best_q - cur.played_q >
-                deblunderQBlunderThreshold - deblunderQBlunderWidth / 2.0);
-          bool deblunderTriggerTerminal = (cur.best_q > -1 && cur.played_q < 1
-                && ((cur.best_q == 1 && ((cur.invariance_info & 8) != 0))
-                 || cur.played_q == -1));
+          bool deblunderTriggerThreshold =
+              (cur.best_q - cur.played_q >
+               deblunderQBlunderThreshold - deblunderQBlunderWidth / 2.0);
+          bool deblunderTriggerTerminal =
+              (cur.best_q > -1 && cur.played_q < 1 &&
+               ((cur.best_q == 1 && ((cur.invariance_info & 8) != 0)) ||
+                cur.played_q == -1));
           if (deblunderTriggerThreshold || deblunderTriggerTerminal) {
             float newZRatio = 1.0f;
             // If width > 0 and the deblunder didn't involve a terminal
             // position, we apply a soft threshold by averaging old and new Z.
             if (deblunderQBlunderWidth > 0 && !deblunderTriggerTerminal) {
               newZRatio = std::min(1.0f, (cur.best_q - cur.played_q -
-               deblunderQBlunderThreshold) / deblunderQBlunderWidth + 0.5f);
+                                          deblunderQBlunderThreshold) /
+                                                 deblunderQBlunderWidth +
+                                             0.5f);
             }
             // Instead of averaging, a randomization can be applied here with
             // newZRatio = newZRatio > rand( [0, 1) ) ? 1.0f : 0.0f;
