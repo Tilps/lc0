@@ -103,7 +103,7 @@ class PositionHistory {
   PositionHistory(PositionHistory&& other) = default;
 
   PositionHistory& operator=(const PositionHistory& other) = default;
-  PositionHistory& operator=(PositionHistory&& other) = default;
+  PositionHistory& operator=(PositionHistory&& other) = default;  
 
   // Returns first position of the game (or fen from which it was initialized).
   const Position& Starting() const { return positions_.front(); }
