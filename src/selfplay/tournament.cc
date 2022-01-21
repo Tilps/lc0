@@ -69,11 +69,6 @@ const OptionId kValueModeSizeId{"value-mode-size", "ValueModeSize",
 const OptionId kTournamentResultsFileId{
     "tournament-results-file", "TournamentResultsFile",
     "Name of file to append the tournament results in fake pgn format."};
-const OptionId kSyzygyTablebaseId{
-    "syzygy-paths", "SyzygyPath",
-    "List of Syzygy tablebase directories, list entries separated by system "
-    "separator (\";\" for Windows, \":\" for Linux).",
-    's'};
 const OptionId kMoveThinkingId{"move-thinking", "MoveThinking",
                                "Show all the per-move thinking."};
 const OptionId kResignPlaythroughId{
@@ -92,6 +87,12 @@ const OptionId kOpeningsMirroredId{
     "Not really compatible with openings mode random."};
 const OptionId kOpeningsModeId{"openings-mode", "OpeningsMode",
                                "A choice of sequential, shuffled, or random."};
+const OptionId kSyzygyTablebaseId{
+	"syzygy-paths", "SyzygyPath",
+	"List of Syzygy tablebase directories, list entries separated by system "
+	"separator (\";\" for Windows, \":\" for Linux).",
+	's' };
+
 }  // namespace
 
 void SelfPlayTournament::PopulateOptions(OptionsParser* options) {
@@ -120,7 +121,6 @@ void SelfPlayTournament::PopulateOptions(OptionsParser* options) {
   options->Add<BoolOption>(kVerboseThinkingId) = false;
   options->Add<IntOption>(kValueModeSizeId, 0, 512) = 0;
   options->Add<StringOption>(kTournamentResultsFileId) = "";
-  options->Add<StringOption>(kSyzygyTablebaseId) = "";
   options->Add<BoolOption>(kMoveThinkingId) = false;
   options->Add<FloatOption>(kResignPlaythroughId, 0.0f, 100.0f) = 0.0f;
   options->Add<FloatOption>(kDiscardedStartChanceId, 0.0f, 100.0f) = 0.0f;
@@ -130,6 +130,7 @@ void SelfPlayTournament::PopulateOptions(OptionsParser* options) {
                                              "random"};
   options->Add<ChoiceOption>(kOpeningsModeId, openings_modes) = "sequential";
 
+  options->Add<StringOption>(kSyzygyTablebaseId);
   SelfPlayGame::PopulateUciParams(options);
 
   auto defaults = options->GetMutableDefaultsOptions();
@@ -147,6 +148,8 @@ void SelfPlayTournament::PopulateOptions(OptionsParser* options) {
   defaults->Set<std::string>(SearchParams::kHistoryFillId, "no");
   defaults->Set<std::string>(NetworkFactory::kBackendId, "multiplexing");
   defaults->Set<bool>(SearchParams::kStickyEndgamesId, false);
+  defaults->Set<bool>(SearchParams::kTwoFoldDrawsId, false);
+  defaults->Set<int>(SearchParams::kTaskWorkersPerSearchWorkerId, 0);
 }
 
 SelfPlayTournament::SelfPlayTournament(
@@ -190,16 +193,6 @@ SelfPlayTournament::SelfPlayTournament(
     first_game_black_ = Random::Get().GetBool();
   }
 
-  std::string tb_paths = options.Get<std::string>(kSyzygyTablebaseId);
-  if (!tb_paths.empty()) {
-    syzygy_tb_ = std::make_unique<SyzygyTablebase>();
-    CERR << "Loading Syzygy tablebases from " << tb_paths;
-    if (!syzygy_tb_->init(tb_paths)) {
-      CERR << "Failed to load Syzygy tablebases!";
-      syzygy_tb_ = nullptr;
-    }
-  }
-
   // Initializing networks.
   for (const auto& name : {"player1", "player2"}) {
     for (const auto& color : {"white", "black"}) {
@@ -241,6 +234,19 @@ SelfPlayTournament::SelfPlayTournament(
       }
     }
   }
+
+  // Take syzygy tablebases from options.
+  std::string tb_paths =
+	  options.Get<std::string>(kSyzygyTablebaseId);
+  if (!tb_paths.empty()) {
+	  syzygy_tb_ = std::make_unique<SyzygyTablebase>();
+	  CERR << "Loading Syzygy tablebases from " << tb_paths;
+	  if (!syzygy_tb_->init(tb_paths)) {
+		  CERR << "Failed to load Syzygy tablebases!";
+		  syzygy_tb_ = nullptr;
+	  }
+  }
+
 }
 
 void SelfPlayTournament::PlayOneGame(int game_number) {
@@ -362,8 +368,9 @@ void SelfPlayTournament::PlayOneGame(int game_number) {
   // PLAY GAME!
   auto player1_threads = player_options_[0][color_idx[0]].Get<int>(kThreadsId);
   auto player2_threads = player_options_[1][color_idx[1]].Get<int>(kThreadsId);
-  game.Play(player1_threads, player2_threads, kTraining, enable_resign);
-
+  game.Play(player1_threads, player2_threads, kTraining, syzygy_tb_.get(),
+            enable_resign);
+  
   // If game was aborted, it's still undecided.
   if (game.GetGameResult() != GameResult::UNDECIDED) {
     // Game callback.
