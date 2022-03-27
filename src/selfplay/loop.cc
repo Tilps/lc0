@@ -238,6 +238,7 @@ void ProcessFile(const std::string& file,
       reader.AddPgnFile(file);
       auto data = reader.ReleaseGames();
       std::string fileName = file.substr(file.find_last_of("/\\") + 1);
+      fileName = fileName.substr(0, fileName.size() - 4) + ".gz";
       TrainingDataWriter writer(outputDir + "/" + fileName);
       for (auto game : data) {
         PositionHistory history;
