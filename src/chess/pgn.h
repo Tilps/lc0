@@ -44,6 +44,9 @@ namespace lczero {
 struct Opening {
   std::string start_fen = ChessBoard::kStartposFen;
   MoveList moves;
+  int outcome;
+  std::string player1;
+  std::string player2;
 };
 
 inline bool GzGetLine(gzFile file, std::string& line) {
@@ -91,6 +94,14 @@ class PgnReader {
           cur_startpos_ = start_trimmed.substr(0, start_trimmed.find('"'));
           cur_board_.SetFromFen(cur_startpos_);
         }
+        if (uc_line.find("[WHITE \"", 0) == 0) {
+          auto start_trimmed = line.substr(8);
+          cur_player1_ = start_trimmed.substr(0, start_trimmed.find('"'));
+        }
+        if (uc_line.find("[BLACK \"", 0) == 0) {
+          auto start_trimmed = line.substr(8);
+          cur_player2_ = start_trimmed.substr(0, start_trimmed.find('"'));
+        }
         continue;
       }
       // Must have at least one non-tag non-empty line in order to be considered
@@ -101,6 +112,11 @@ class PgnReader {
       while ((in_comment && line.find('}', cur_offset) != std::string::npos) ||
              (!in_comment && line.find('{', cur_offset) != std::string::npos)) {
         if (in_comment && line.find('}', cur_offset) != std::string::npos) {
+          auto comment_bit =
+              line.substr(cur_offset+1, line.find('}', cur_offset) - cur_offset-1);
+          if (comment_bit.find("OL: ", 0) == 0) {
+            cur_to_keep_ = std::stoi(comment_bit.substr(4));
+          }
           line = line.substr(0, cur_offset) +
                  line.substr(line.find('}', cur_offset) + 1);
           in_comment = false;
@@ -140,8 +156,16 @@ class PgnReader {
         // Pure move numbers can be skipped.
         if (word.size() < 2) continue;
         // Ignore score line.
-        if (word == "1/2-1/2" || word == "1-0" || word == "0-1" || word == "*")
+        if (word == "1/2-1/2" || word == "1-0" || word == "0-1" ||
+            word == "*") {
+          if (word == "1/2-1/2")
+            cur_outcome_ = 0;
+          else if (word == "1-0")
+            cur_outcome_ = 1;
+          else if (word == "0-1")
+            cur_outcome_ = -1;
           continue;
+        }
         cur_game_.push_back(SanToMove(word, cur_board_));
         cur_board_.ApplyMove(cur_game_.back());
         // Board ApplyMove wants mirrored for black, but outside code wants
@@ -163,10 +187,17 @@ class PgnReader {
 
  private:
   void Flush() {
-    games_.push_back({cur_startpos_, cur_game_});
+    if (cur_to_keep_ != -1) {
+      cur_game_.resize(cur_to_keep_);
+    }
+    games_.push_back({cur_startpos_, cur_game_, cur_outcome_, cur_player1_, cur_player2_});
     cur_game_.clear();
     cur_board_.SetFromFen(ChessBoard::kStartposFen);
     cur_startpos_ = ChessBoard::kStartposFen;
+    cur_outcome_ = -2;
+    cur_player1_ = "";
+    cur_player2_ = "";
+    cur_to_keep_ = -1;
   }
 
   Move::Promotion PieceToPromotion(int p) {
@@ -313,6 +344,10 @@ class PgnReader {
 
   ChessBoard cur_board_{ChessBoard::kStartposFen};
   MoveList cur_game_;
+  int cur_outcome_ = -2;
+  std::string cur_player1_;
+  std::string cur_player2_;
+  int cur_to_keep_ = -1;
   std::string cur_startpos_ = ChessBoard::kStartposFen;
   std::vector<Opening> games_;
 };
