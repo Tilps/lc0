@@ -240,6 +240,7 @@ void ProcessFile(const std::string& file,
       std::string fileName = file.substr(file.find_last_of("/\\") + 1);
       fileName = fileName.substr(0, fileName.size() - 4) + ".gz";
       TrainingDataWriter writer(outputDir + "/" + fileName);
+      TrainingDataWriter writer2(outputDir + "/test_" + fileName);
       for (auto game : data) {
         PositionHistory history;
         ChessBoard board;
@@ -266,7 +267,11 @@ void ProcessFile(const std::string& file,
         // This assumes a lot...
         data.p1idx = std::stoi(game.player1.substr(11));
         data.p2idx = std::stoi(game.player2.substr(11));
-        writer.WriteChunk(data);
+        if (rand() % 2 == 0) {
+          writer.WriteChunk(data);
+        } else {
+          writer2.WriteChunk(data);
+        }
       }
     } catch (Exception& ex) {
       std::cerr << "While processing: " << file
